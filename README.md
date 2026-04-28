@@ -22,6 +22,9 @@ Se eligio Electron en lugar de Tauri porque en este entorno Node.js estaba dispo
 - Exporta el respaldo completo a CSV
 - Importa CSV para restaurar datos en otro equipo o sesion
 - Permite correr en GitHub Pages guardando datos localmente por navegador con IndexedDB
+- Permite cerrar una evaluacion descargando un PDF de feedback para compartir por correo despues del 1:1
+- Incluye firma configurable del responsable en el PDF y en los respaldos exportados
+- El respaldo CSV ahora conserva tambien colaboradores sin evaluacion, cierres por período y la firma del responsable
 
 ## Criterios incluidos
 

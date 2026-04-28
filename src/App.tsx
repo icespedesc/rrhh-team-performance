@@ -31,7 +31,7 @@ import {
   IconTrash,
 } from '@tabler/icons-react';
 import { calculatePreview, createEmptyEvaluation } from './lib/scoring';
-import type { Collaborator, EvaluationRecord, EvaluationWithInsights, PeriodStatus, RankingRow } from './lib/types';
+import type { AppSettings, Collaborator, EvaluationRecord, EvaluationWithInsights, PeriodStatus, RankingRow } from './lib/types';
 
 type CriterionKey = keyof Pick<
   EvaluationRecord,
@@ -127,6 +127,11 @@ const currentYear = String(new Date().getFullYear());
 const allTeamsLabel = 'Todos los equipos';
 const appVersion = packageJson.version;
 const appCredit = 'Creada por Ignacio Céspedes';
+const emptyAppSettings: AppSettings = {
+  leaderName: '',
+  leaderRole: '',
+  leaderEmail: '',
+};
 type IconComponent = typeof IconUser;
 
 const criterionIcons: Record<CriterionKey, IconComponent> = {
@@ -652,6 +657,481 @@ function summarizeFeedback(evaluation: EvaluationRecord) {
   };
 }
 
+type FeedbackPdfInput = {
+  appSettings: AppSettings;
+  collaborator: Collaborator;
+  evaluation: EvaluationRecord;
+  feedbackHighlights: ReturnType<typeof summarizeFeedback>;
+  feedbackStage: FeedbackStage;
+  generatedAt: string;
+  history: HistoryPoint[];
+  preview: ReturnType<typeof calculatePreview>;
+  speechSuggestions: ReturnType<typeof buildSpeechSuggestions>;
+};
+
+function sanitizeFileNameSegment(value: string) {
+  return (
+    value
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-zA-Z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .toLowerCase() || 'feedback'
+  );
+}
+
+function toPdfLines(value: string) {
+  const normalized = value.trim();
+
+  if (!normalized) {
+    return [] as string[];
+  }
+
+  return normalized.split('\n').map((line) => line.trim()).map((line) => {
+    if (!line) {
+      return '';
+    }
+
+    if (/^[-*]\s+/.test(line)) {
+      return `• ${line.replace(/^[-*]\s+/, '')}`;
+    }
+
+    return line;
+  });
+}
+
+function buildPdfSharedSection(systemText: string, manualText: string, manualLead: string) {
+  const lines = [...toPdfLines(systemText)];
+
+  if (manualText.trim()) {
+    if (lines.length > 0) {
+      lines.push('');
+    }
+
+    lines.push(manualLead);
+    lines.push(...toPdfLines(manualText));
+  }
+
+  return lines;
+}
+
+let pdfLogoDataUrlPromise: Promise<string | null> | null = null;
+
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      if (typeof reader.result === 'string') {
+        resolve(reader.result);
+        return;
+      }
+
+      reject(new Error('No se pudo convertir la imagen del logo.'));
+    };
+    reader.onerror = () => reject(reader.error ?? new Error('No se pudo leer la imagen del logo.'));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function getPdfLogoDataUrl() {
+  if (!pdfLogoDataUrlPromise) {
+    pdfLogoDataUrlPromise = fetch(falabellaLogoUrl)
+      .then((response) => {
+        if (!response.ok) {
+          throw new Error('No se pudo cargar el logo para el PDF.');
+        }
+
+        return response.blob();
+      })
+      .then(blobToDataUrl)
+      .catch(() => null);
+  }
+
+  return pdfLogoDataUrlPromise;
+}
+
+async function downloadFeedbackPdf(input: FeedbackPdfInput) {
+  const { jsPDF } = await import('jspdf');
+  const logoDataUrl = await getPdfLogoDataUrl();
+  const doc = new jsPDF({ format: 'a4', unit: 'pt' });
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const margin = 48;
+  const contentWidth = pageWidth - margin * 2;
+  const lineHeight = 15;
+  let cursorY = margin;
+  const preparedByName = input.appSettings.leaderName || 'Jefatura responsable';
+  const preparedByRole = input.appSettings.leaderRole || 'Lidera esta conversación de feedback';
+  const preparedByEmail = input.appSettings.leaderEmail;
+  const generatedLabel = new Intl.DateTimeFormat('es-CL', {
+    dateStyle: 'long',
+    timeStyle: 'short',
+  }).format(new Date(input.generatedAt));
+  const recommendation = getCompensationCopy(input.preview.compensationBand).label;
+  const coverTop = 40;
+  const coverHeight = 316;
+  const coverBottom = coverTop + coverHeight;
+
+  function getFittedFontSize(text: string, maxWidth: number, preferredSize: number, minSize: number) {
+    let currentSize = preferredSize;
+    doc.setFontSize(currentSize);
+
+    while (currentSize > minSize && doc.getTextWidth(text) > maxWidth) {
+      currentSize -= 1;
+      doc.setFontSize(currentSize);
+    }
+
+    return currentSize;
+  }
+
+  function drawPill(x: number, y: number, width: number, label: string) {
+    doc.setFillColor(232, 238, 255);
+    doc.roundedRect(x, y, width, 24, 12, 12, 'F');
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(getFittedFontSize(label, width - 24, 10, 8));
+    doc.setTextColor(38, 73, 182);
+    doc.text(label, x + 12, y + 16);
+  }
+
+  function addParagraphBlock(text: string, x: number, y: number, width: number, options?: { color?: [number, number, number]; fontSize?: number; fontStyle?: 'normal' | 'bold' }) {
+    const color = options?.color ?? [36, 52, 77];
+    const fontSize = options?.fontSize ?? 11;
+    const fontStyle = options?.fontStyle ?? 'normal';
+    doc.setFont('helvetica', fontStyle);
+    doc.setFontSize(fontSize);
+    doc.setTextColor(color[0], color[1], color[2]);
+    const wrapped = doc.splitTextToSize(text, width);
+    const lines = Array.isArray(wrapped) ? wrapped : [wrapped];
+    doc.text(lines, x, y);
+    return lines.length;
+  }
+
+  function ensureSpace(height: number) {
+    if (cursorY + height <= pageHeight - margin) {
+      return;
+    }
+
+    doc.addPage();
+    cursorY = margin;
+  }
+
+  function addWrappedText(text: string, options?: { color?: [number, number, number]; fontSize?: number; fontStyle?: 'normal' | 'bold'; indent?: number }) {
+    const color = options?.color ?? [36, 52, 77];
+    const fontSize = options?.fontSize ?? 11;
+    const fontStyle = options?.fontStyle ?? 'normal';
+    const indent = options?.indent ?? 0;
+    const isBullet = text.startsWith('• ');
+    const bulletIndent = isBullet ? 12 : 0;
+    const content = isBullet ? text.slice(2) : text;
+
+    doc.setFont('helvetica', fontStyle);
+    doc.setFontSize(fontSize);
+    doc.setTextColor(color[0], color[1], color[2]);
+
+    if (!content) {
+      cursorY += 8;
+      return;
+    }
+
+    const wrapped = doc.splitTextToSize(content, contentWidth - indent - bulletIndent);
+    const wrappedLines = Array.isArray(wrapped) ? wrapped : [wrapped];
+    ensureSpace(wrappedLines.length * lineHeight + 4);
+
+    if (isBullet) {
+      doc.text('•', margin + indent, cursorY);
+      doc.text(wrappedLines, margin + indent + bulletIndent, cursorY);
+    } else {
+      doc.text(wrappedLines, margin + indent, cursorY);
+    }
+
+    cursorY += wrappedLines.length * lineHeight + 4;
+  }
+
+  function addSection(title: string, lines: string[], fallback?: string) {
+    const sectionLines = lines.length > 0 ? lines : fallback ? [fallback] : [];
+    if (sectionLines.length === 0) {
+      return;
+    }
+
+    const sectionWidth = contentWidth - 36;
+    const sectionEntries = sectionLines.map((line) => {
+      const isLead = line.endsWith(':') && !line.startsWith('• ');
+      const content = line.startsWith('• ') ? line.slice(2) : line;
+      doc.setFont('helvetica', isLead ? 'bold' : 'normal');
+      doc.setFontSize(isLead ? 10 : 11);
+      const wrapped = doc.splitTextToSize(content, sectionWidth - (line.startsWith('• ') ? 12 : 0));
+      const wrappedLines = Array.isArray(wrapped) ? wrapped : [wrapped];
+      return { isLead, isBullet: line.startsWith('• '), wrappedLines };
+    });
+    const bodyHeight = sectionEntries.reduce((total, entry) => total + entry.wrappedLines.length * lineHeight + 4, 0);
+    const sectionHeight = 40 + bodyHeight + 16;
+
+    ensureSpace(sectionHeight + 8);
+    doc.setFillColor(250, 252, 255);
+    doc.setDrawColor(224, 231, 245);
+    doc.roundedRect(margin, cursorY, contentWidth, sectionHeight, 18, 18, 'FD');
+    doc.setFillColor(38, 73, 182);
+    doc.roundedRect(margin, cursorY, 8, sectionHeight, 8, 8, 'F');
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(13);
+    doc.setTextColor(21, 34, 56);
+    doc.text(title, margin + 22, cursorY + 24);
+    cursorY += 44;
+
+    for (const entry of sectionEntries) {
+      doc.setFont('helvetica', entry.isLead ? 'bold' : 'normal');
+      doc.setFontSize(entry.isLead ? 10 : 11);
+      doc.setTextColor(entry.isLead ? 38 : 36, entry.isLead ? 73 : 52, entry.isLead ? 182 : 77);
+      ensureSpace(entry.wrappedLines.length * lineHeight + 4);
+
+      if (entry.isBullet) {
+        doc.text('•', margin + 22, cursorY);
+        doc.text(entry.wrappedLines, margin + 34, cursorY);
+      } else {
+        doc.text(entry.wrappedLines, margin + 22, cursorY);
+      }
+
+      cursorY += entry.wrappedLines.length * lineHeight + 4;
+    }
+
+    cursorY += 20;
+  }
+
+  doc.setFillColor(244, 247, 252);
+  doc.rect(0, 0, pageWidth, pageHeight, 'F');
+  doc.setFillColor(222, 231, 250);
+  doc.circle(pageWidth - 84, 110, 118, 'F');
+  doc.setFillColor(38, 73, 182);
+  doc.roundedRect(margin, coverTop, contentWidth, coverHeight, 30, 30, 'F');
+  doc.setFillColor(30, 60, 160);
+  doc.roundedRect(margin + contentWidth - 144, coverTop, 144, coverHeight, 30, 30, 'F');
+  doc.setFillColor(255, 255, 255);
+  doc.roundedRect(margin + 28, coverTop + 202, contentWidth - 56, 100, 22, 22, 'F');
+  doc.setDrawColor(255, 255, 255);
+  doc.setLineWidth(1);
+  doc.line(margin + 28, coverTop + 152, margin + contentWidth - 28, coverTop + 152);
+
+  drawPill(margin + 28, coverTop + 26, 150, 'Reporte de feedback 1:1');
+
+  if (logoDataUrl) {
+    doc.setFillColor(255, 255, 255);
+    doc.roundedRect(pageWidth - margin - 210, coverTop + 20, 182, 56, 18, 18, 'F');
+    doc.addImage(logoDataUrl, 'PNG', pageWidth - margin - 192, coverTop + 29, 146, 36);
+  }
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(32);
+  doc.setTextColor(255, 255, 255);
+  doc.text(input.collaborator.name, margin + 28, coverTop + 92);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(13);
+  doc.setTextColor(226, 234, 255);
+  doc.text(`${input.collaborator.role} · ${input.collaborator.team}`, margin + 28, coverTop + 118);
+  doc.text(`Período ${input.evaluation.period}`, margin + 28, coverTop + 138);
+
+  drawPill(margin + 28, coverTop + 166, 130, `Estado: ${input.feedbackStage.label}`);
+  drawPill(margin + 166, coverTop + 166, contentWidth - 194, `Recomendación: ${recommendation}`);
+
+  const summaryX = margin + 28;
+  const summaryY = coverTop + 202;
+  const summaryWidth = contentWidth - 56;
+  const summaryLeftWidth = 208;
+  const summaryGap = 18;
+  const summaryRightX = summaryX + summaryLeftWidth + summaryGap;
+  const summaryRightWidth = summaryWidth - summaryLeftWidth - summaryGap;
+  doc.setDrawColor(224, 231, 245);
+  doc.line(summaryRightX - 9, summaryY + 18, summaryRightX - 9, summaryY + 82);
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(10);
+  doc.setTextColor(94, 106, 132);
+  doc.text('Resultado general', summaryX + 18, summaryY + 24);
+  doc.setFontSize(30);
+  doc.setTextColor(21, 34, 56);
+  doc.text(formatScore(input.preview.score), summaryX + 18, summaryY + 56);
+  addParagraphBlock(recommendation, summaryX + 18, summaryY + 76, summaryLeftWidth - 36, {
+    color: [38, 73, 182],
+    fontSize: 11,
+    fontStyle: 'bold',
+  });
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(10);
+  doc.setTextColor(75, 85, 104);
+  doc.text(`Mérito: ${input.preview.meritPoints} pts`, summaryX + 18, summaryY + 94);
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(10);
+  doc.setTextColor(94, 106, 132);
+  doc.text('Preparado por', summaryRightX, summaryY + 24);
+  const preparedNameFontSize = getFittedFontSize(preparedByName, summaryRightWidth, 15, 11);
+  const preparedNameLines = addParagraphBlock(preparedByName, summaryRightX, summaryY + 50, summaryRightWidth, {
+    color: [21, 34, 56],
+    fontSize: preparedNameFontSize,
+    fontStyle: 'bold',
+  });
+  let preparedTextY = summaryY + 50 + preparedNameLines * 16 + 2;
+  preparedTextY += addParagraphBlock(preparedByRole, summaryRightX, preparedTextY, summaryRightWidth, {
+    color: [75, 85, 104],
+    fontSize: 10,
+  }) * 14;
+  if (preparedByEmail) {
+    addParagraphBlock(preparedByEmail, summaryRightX, preparedTextY + 2, summaryRightWidth, {
+      color: [75, 85, 104],
+      fontSize: 9,
+    });
+  }
+
+  doc.setFillColor(255, 255, 255);
+  doc.setDrawColor(228, 234, 244);
+  doc.roundedRect(margin + 20, coverBottom + 18, contentWidth - 40, 86, 18, 18, 'FD');
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(11);
+  doc.setTextColor(60, 73, 97);
+  doc.text('Documento de apoyo para la conversación 1:1.', margin + 36, coverBottom + 44);
+  addParagraphBlock(
+    'Resume fortalezas, focos de desarrollo, acuerdos y seguimiento esperado para el período evaluado.',
+    margin + 36,
+    coverBottom + 64,
+    contentWidth - 72,
+    { color: [96, 108, 132], fontSize: 10 },
+  );
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(10);
+  doc.setTextColor(38, 73, 182);
+  doc.text(`Generado el ${generatedLabel}`, margin + 36, coverBottom + 98);
+
+  doc.addPage();
+  cursorY = margin;
+
+  if (logoDataUrl) {
+    doc.addImage(logoDataUrl, 'PNG', margin, cursorY, 128, 38);
+  }
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(22);
+  doc.setTextColor(21, 34, 56);
+  doc.text(input.collaborator.name, margin, cursorY + 72);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(11);
+  doc.setTextColor(75, 85, 104);
+  doc.text(`${input.collaborator.role} · ${input.collaborator.team} · Período ${input.evaluation.period}`, margin, cursorY + 92);
+  doc.text(`Responsable del feedback: ${preparedByName}`, margin, cursorY + 110);
+  cursorY += 142;
+
+  ensureSpace(92);
+  doc.setFillColor(241, 245, 255);
+  doc.setDrawColor(203, 216, 244);
+  doc.roundedRect(margin, cursorY, contentWidth, 96, 18, 18, 'FD');
+  doc.setFillColor(38, 73, 182);
+  doc.roundedRect(margin, cursorY, 8, 96, 8, 8, 'F');
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(11);
+  doc.setTextColor(38, 73, 182);
+  doc.text(`Estado: ${input.feedbackStage.label}`, margin + 24, cursorY + 28);
+  doc.text(`Recomendación: ${recommendation}`, margin + 24, cursorY + 48);
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(75, 85, 104);
+  doc.text(input.feedbackStage.description, margin + 24, cursorY + 69, { maxWidth: contentWidth - 168 });
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(30);
+  doc.setTextColor(21, 34, 56);
+  const scoreText = formatScore(input.preview.score);
+  doc.text(scoreText, pageWidth - margin - doc.getTextWidth(scoreText), cursorY + 42);
+  doc.setFontSize(10);
+  doc.setTextColor(75, 85, 104);
+  const meritText = `${input.preview.meritPoints} pts mérito`;
+  doc.text(meritText, pageWidth - margin - doc.getTextWidth(meritText), cursorY + 64);
+  cursorY += 118;
+
+  addSection(
+    'Detalle de atributos',
+    criteria.map((criterion) => `• ${criterion.label}: ${input.evaluation[criterion.key]}/5 (${ratingCopy[input.evaluation[criterion.key]] ?? `Nivel ${input.evaluation[criterion.key]}`})`),
+  );
+
+  addSection(
+    'Lo que hizo bien',
+    buildPdfSharedSection(
+      input.speechSuggestions.strengthsText,
+      input.evaluation.strengths,
+      'Ejemplos concretos preparados para la conversación:',
+    ),
+    'No se registraron fortalezas para este período.',
+  );
+
+  addSection(
+    'Qué debe reforzar',
+    buildPdfSharedSection(
+      input.speechSuggestions.improvementsText,
+      input.evaluation.improvements,
+      'Observaciones adicionales trabajadas durante el período:',
+    ),
+    'No se registraron focos de mejora para este período.',
+  );
+
+  addSection(
+    'Mensaje guía para la conversación',
+    buildPdfSharedSection(
+      input.speechSuggestions.managerNotesText,
+      input.evaluation.managerNotes,
+      'Notas extra usadas para conducir la conversación:',
+    ),
+    'No se registraron notas para conducir la conversación.',
+  );
+
+  addSection(
+    'Fortalezas que conviene destacar',
+    input.feedbackHighlights.strengths.map((item) => `• ${item}`),
+    'No se detectaron fortalezas destacadas para mostrar en este reporte.',
+  );
+
+  addSection(
+    'Focos de desarrollo',
+    input.feedbackHighlights.focusAreas.map((item) => `• ${item}`),
+    'No se detectaron focos de desarrollo adicionales para mostrar en este reporte.',
+  );
+
+  addSection(
+    'Evolución por período',
+    input.history.map((item) => `• ${item.period}: ${formatScore(item.score)}`),
+    'Este es el primer período con evaluación registrada para este colaborador.',
+  );
+
+  addSection('Notas tomadas en el 1:1', toPdfLines(input.evaluation.feedbackSessionNotes), 'No se registraron notas de la reunión 1:1.');
+  addSection('Siguientes pasos y plan anual', toPdfLines(input.evaluation.yearlyImprovementPlan), 'No se registró un plan anual o próximos pasos para este período.');
+
+  ensureSpace(126);
+  doc.setDrawColor(180, 192, 216);
+  doc.line(margin, cursorY + 20, margin + 180, cursorY + 20);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(12);
+  doc.setTextColor(21, 34, 56);
+  doc.text('Firma y seguimiento', margin, cursorY + 52);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(11);
+  doc.setTextColor(75, 85, 104);
+  doc.text(preparedByName, margin, cursorY + 74);
+  doc.text(preparedByRole, margin, cursorY + 92);
+  if (preparedByEmail) {
+    doc.text(preparedByEmail, margin, cursorY + 110);
+  }
+
+  const totalPages = doc.getNumberOfPages();
+  for (let page = 1; page <= totalPages; page += 1) {
+    doc.setPage(page);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9);
+    doc.setTextColor(122, 131, 146);
+    const footerLabel = `Generado por Evaluación de Desempeño v${appVersion}`;
+    const pageLabel = `Página ${page}/${totalPages}`;
+    doc.text(footerLabel, margin, pageHeight - 18);
+    doc.text(pageLabel, pageWidth - margin - doc.getTextWidth(pageLabel), pageHeight - 18);
+  }
+
+  const fileName = `feedback-${sanitizeFileNameSegment(input.collaborator.name)}-${sanitizeFileNameSegment(input.evaluation.period)}.pdf`;
+  doc.save(fileName);
+}
+
 function appendBulletPoint(value: string) {
   const normalized = value.replace(/\s+$/, '');
 
@@ -794,7 +1274,12 @@ export default function App() {
   const [discardDialogOpen, setDiscardDialogOpen] = useState(false);
   const [discardDialogReason, setDiscardDialogReason] = useState<'navigation' | 'window-close'>('navigation');
   const [clearDataDialogOpen, setClearDataDialogOpen] = useState(false);
+  const [importDialogMessage, setImportDialogMessage] = useState<string | null>(null);
+  const [closingFeedback, setClosingFeedback] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [appSettings, setAppSettings] = useState<AppSettings>(emptyAppSettings);
+  const [appSettingsDraft, setAppSettingsDraft] = useState<AppSettings>(emptyAppSettings);
+  const [savingAppSettings, setSavingAppSettings] = useState(false);
   const [selectedPeriodStatus, setSelectedPeriodStatus] = useState<PeriodStatus>({
     collaboratorId: null,
     period: currentYear,
@@ -806,6 +1291,7 @@ export default function App() {
   const [collaboratorDraft, setCollaboratorDraft] = useState({ name: '', role: '', team: '' });
   const [toast, setToast] = useState<{ icon: 'save' | 'lock'; message: string } | null>(null);
   const [historyEvaluations, setHistoryEvaluations] = useState<EvaluationWithInsights[]>([]);
+  const [refreshToken, setRefreshToken] = useState(0);
   const pendingDiscardActionRef = useRef<(() => void | Promise<void>) | null>(null);
 
   useEffect(() => {
@@ -860,7 +1346,7 @@ export default function App() {
     }
 
     void loadRanking(selectedPeriod, selectedTeam);
-  }, [selectedPeriod, selectedTeam]);
+  }, [refreshToken, selectedPeriod, selectedTeam]);
 
   useEffect(() => {
     if (selectedId === null || !selectedPeriod) {
@@ -874,7 +1360,7 @@ export default function App() {
     }
 
     void loadPeriodStatus(selectedId, selectedPeriod);
-  }, [selectedId, selectedPeriod]);
+  }, [refreshToken, selectedId, selectedPeriod]);
 
   useEffect(() => {
     if (selectedId === null || !selectedPeriod) {
@@ -884,7 +1370,7 @@ export default function App() {
     }
 
     void loadEvaluation(selectedId, selectedPeriod);
-  }, [selectedId, selectedPeriod]);
+  }, [refreshToken, selectedId, selectedPeriod]);
 
   useEffect(() => {
     if (selectedId === null) {
@@ -910,7 +1396,7 @@ export default function App() {
     return () => {
       isCancelled = true;
     };
-  }, [availablePeriods, selectedId, selectedPeriod]);
+  }, [availablePeriods, refreshToken, selectedId, selectedPeriod]);
 
   const selectedCollaborator = useMemo(
     () => visibleCollaborators.find((collaborator) => collaborator.id === selectedId) ?? null,
@@ -1099,10 +1585,11 @@ export default function App() {
     setToast({ message, icon });
   }
 
-  async function refreshAll() {
-    const [collaboratorsResult, periodsResult] = await Promise.allSettled([
+  async function refreshAll(forceDependentReload = false) {
+    const [collaboratorsResult, periodsResult, appSettingsResult] = await Promise.allSettled([
       window.performanceApp.listCollaborators(),
       window.performanceApp.listPeriods(),
+      window.performanceApp.getAppSettings(),
     ]);
 
     if (collaboratorsResult.status === 'fulfilled') {
@@ -1127,6 +1614,15 @@ export default function App() {
       setStatus(
         'No se pudo refrescar el filtro de períodos. Si estás en modo desarrollo, reinicia la app para recargar la capa local.',
       );
+    }
+
+    if (appSettingsResult.status === 'fulfilled') {
+      setAppSettings(appSettingsResult.value);
+      setAppSettingsDraft(appSettingsResult.value);
+    }
+
+    if (forceDependentReload) {
+      setRefreshToken((current) => current + 1);
     }
   }
 
@@ -1213,6 +1709,37 @@ export default function App() {
     setStatus('Formulario listo para crear un nuevo colaborador.');
   }
 
+  async function persistEvaluationForClose() {
+    if (selectedId === null) {
+      return storedEvaluation;
+    }
+
+    if (!evaluation) {
+      return storedEvaluation;
+    }
+
+    const normalizedPeriod = evaluation.period.trim();
+    if (!normalizedPeriod) {
+      throw new Error('Ingresa un período antes de cerrar la evaluación.');
+    }
+
+    const saved = await window.performanceApp.saveEvaluation({
+      ...evaluation,
+      period: normalizedPeriod,
+    });
+
+    setStoredEvaluation(saved);
+    setEvaluation(toEvaluationRecord(saved));
+    setSelectedPeriod(normalizedPeriod);
+    setAvailablePeriods((current) => buildPeriods([...current, normalizedPeriod]));
+    setHistoryEvaluations((current) =>
+      [...current.filter((item) => item.period !== saved.period), saved].sort((left, right) => left.period.localeCompare(right.period)),
+    );
+    await loadRanking(normalizedPeriod, selectedTeam);
+
+    return saved;
+  }
+
   async function handleSaveEvaluation(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!evaluation || selectedId === null) {
@@ -1255,20 +1782,118 @@ export default function App() {
     }
   }
 
-  async function confirmClosePeriod() {
+  async function handleDownloadFeedbackPdf(options?: {
+    feedbackStageOverride?: FeedbackStage;
+    silent?: boolean;
+    sourceEvaluation?: EvaluationRecord | EvaluationWithInsights | null;
+  }) {
+    if (!selectedCollaborator) {
+      if (!options?.silent) {
+        setStatus('Selecciona un colaborador antes de descargar el PDF de feedback.');
+      }
+      return false;
+    }
+
+    const sourceEvaluation = options?.sourceEvaluation;
+    const pdfEvaluation = sourceEvaluation
+      ? 'score' in sourceEvaluation
+        ? toEvaluationRecord(sourceEvaluation)
+        : sourceEvaluation
+      : evaluation ?? (storedEvaluation ? toEvaluationRecord(storedEvaluation) : null);
+
+    if (!pdfEvaluation) {
+      if (!options?.silent) {
+        setStatus('No hay una evaluación disponible para generar el PDF de feedback.');
+      }
+      return false;
+    }
+
+    try {
+      const pdfPreview = calculatePreview(pdfEvaluation);
+      const pdfSpeechSuggestions = buildSpeechSuggestions(pdfEvaluation, selectedCollaborator.name);
+      const pdfHighlights = summarizeFeedback(pdfEvaluation);
+      const historyMap = new Map(historyEvaluations.map((item) => [item.period, item.score]));
+      historyMap.set(pdfEvaluation.period, pdfPreview.score);
+      const pdfHistory = Array.from(historyMap.entries())
+        .sort((left, right) => left[0].localeCompare(right[0]))
+        .map(([period, score]) => ({ period, score }));
+
+      await downloadFeedbackPdf({
+        appSettings,
+        collaborator: selectedCollaborator,
+        evaluation: pdfEvaluation,
+        feedbackHighlights: pdfHighlights,
+        feedbackStage: options?.feedbackStageOverride ?? feedbackStage,
+        generatedAt: new Date().toISOString(),
+        history: pdfHistory,
+        preview: pdfPreview,
+        speechSuggestions: pdfSpeechSuggestions,
+      });
+
+      if (!options?.silent) {
+        setStatus(`PDF de feedback descargado para ${selectedCollaborator.name} en ${pdfEvaluation.period}.`);
+        showToast(`Reporte PDF descargado para ${selectedCollaborator.name}.`, 'save');
+      }
+
+      return true;
+    } catch (error) {
+      if (!options?.silent) {
+        setStatus(error instanceof Error ? error.message : 'No se pudo generar el PDF de feedback.');
+      }
+      return false;
+    }
+  }
+
+  async function confirmClosePeriod(shouldDownloadPdf = false) {
     if (!selectedPeriod || selectedId === null) {
       return;
     }
 
+    if (closingFeedback) {
+      return;
+    }
+
     setCloseDialogOpen(false);
+    setClosingFeedback(true);
 
     try {
-      const closed = await window.performanceApp.closePeriod(selectedId, selectedPeriod);
+      const saved = await persistEvaluationForClose();
+      const periodToClose = saved?.period ?? selectedPeriod.trim();
+      if (!periodToClose) {
+        throw new Error('Ingresa un período válido antes de cerrar la evaluación.');
+      }
+
+      const closed = await window.performanceApp.closePeriod(selectedId, periodToClose);
       setSelectedPeriodStatus(closed);
-      setStatus(`Feedback cerrado para ${selectedCollaborator?.name ?? 'el colaborador seleccionado'} en ${selectedPeriod}. La evaluación quedó en solo lectura.`);
-      showToast(`Feedback de ${selectedCollaborator?.name ?? 'colaborador'} en ${selectedPeriod} cerrado correctamente.`, 'lock');
+      const closedStage: FeedbackStage = {
+        description: 'Solo lectura. Este feedback ya fue cerrado para el período seleccionado.',
+        isReadOnly: true,
+        label: 'Cerrado',
+        tone: 'closed',
+      };
+      const pdfDownloaded = shouldDownloadPdf
+        ? await handleDownloadFeedbackPdf({
+            feedbackStageOverride: closedStage,
+            silent: true,
+            sourceEvaluation: saved ?? evaluation ?? storedEvaluation,
+          })
+        : false;
+
+      setStatus(
+        pdfDownloaded
+          ? `Feedback cerrado para ${selectedCollaborator?.name ?? 'el colaborador seleccionado'} en ${periodToClose} y PDF descargado correctamente.`
+          : `Feedback cerrado para ${selectedCollaborator?.name ?? 'el colaborador seleccionado'} en ${periodToClose}. La evaluación quedó en solo lectura.`,
+      );
+      showToast(
+        pdfDownloaded
+          ? `Feedback cerrado y PDF generado para ${selectedCollaborator?.name ?? 'colaborador'}.`
+          : `Feedback de ${selectedCollaborator?.name ?? 'colaborador'} en ${periodToClose} cerrado correctamente.`,
+        'lock',
+      );
     } catch (error) {
       setStatus(error instanceof Error ? error.message : 'No se pudo cerrar el período.');
+    } finally {
+      setClosingFeedback(false);
     }
   }
 
@@ -1302,10 +1927,28 @@ export default function App() {
       return;
     }
 
-    setStatus(
-      `Importación completada: ${result.imported?.collaborators ?? 0} filas de colaboradores y ${result.imported?.evaluations ?? 0} evaluaciones procesadas.`,
-    );
-    await refreshAll();
+    const importMessage = `Importación completada: ${result.imported?.collaborators ?? 0} colaboradores, ${result.imported?.evaluations ?? 0} evaluaciones y ${result.imported?.statuses ?? 0} cierres restaurados${result.imported?.settingsUpdated ? ', incluyendo la firma del responsable.' : '.'}`;
+
+    await refreshAll(true);
+    setStatus(importMessage);
+    setImportDialogMessage(`${importMessage} La vista ya fue actualizada con los datos cargados.`);
+  }
+
+  async function handleSaveAppSettings(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSavingAppSettings(true);
+
+    try {
+      const saved = await window.performanceApp.saveAppSettings(appSettingsDraft);
+      setAppSettings(saved);
+      setAppSettingsDraft(saved);
+      setStatus('Firma del responsable guardada correctamente. Se usará en el PDF de feedback y en los respaldos CSV.');
+      showToast('Firma del responsable guardada.', 'save');
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : 'No se pudo guardar la firma del responsable.');
+    } finally {
+      setSavingAppSettings(false);
+    }
   }
 
   function handleRequestClearData() {
@@ -1322,6 +1965,8 @@ export default function App() {
       setCloseDialogOpen(false);
       setDiscardDialogOpen(false);
       setFeedbackMode(false);
+      setAppSettings(emptyAppSettings);
+      setAppSettingsDraft(emptyAppSettings);
       setIsCreatingCollaborator(false);
       setCollaboratorDraft({ name: '', role: '', team: '' });
       setCollaborators([]);
@@ -1585,15 +2230,21 @@ export default function App() {
                 Volver a vista general
               </button>
               {isSelectedPeriodClosed ? (
-                <span className="score-status-badge score-status-closed" title="El feedback ya fue cerrado para este período.">
-                  <IconLock size={15} stroke={2} />
-                  Período cerrado
-                </span>
+                <>
+                  <button className="ghost-button" onClick={() => void handleDownloadFeedbackPdf()} type="button">
+                    <IconDeviceFloppy size={18} stroke={1.8} />
+                    Descargar PDF
+                  </button>
+                  <span className="score-status-badge score-status-closed" title="El feedback ya fue cerrado para este período.">
+                    <IconLock size={15} stroke={2} />
+                    Período cerrado
+                  </span>
+                </>
               ) : (
                 <button
                   className="danger-button"
                   onClick={handleClosePeriod}
-                  disabled={ranking.length === 0}
+                  disabled={closingFeedback || ranking.length === 0}
                   type="button"
                   title="Cerrar feedback del período y bloquear cambios."
                 >
@@ -1931,13 +2582,44 @@ export default function App() {
             </div>
 
             <div className="settings-actions">
+              <article className="settings-card settings-card-form">
+                <div>
+                  <h3 className="title-with-icon">
+                    <IconUser size={20} stroke={1.8} />
+                    Firma del responsable
+                  </h3>
+                  <p>Define el nombre y contacto que aparecerán en la portada y al final del PDF de feedback.</p>
+                </div>
+                <form className="settings-form" onSubmit={handleSaveAppSettings}>
+                  <input
+                    placeholder="Nombre de quien entrega el feedback"
+                    value={appSettingsDraft.leaderName}
+                    onChange={(event) => setAppSettingsDraft((current) => ({ ...current, leaderName: event.target.value }))}
+                  />
+                  <input
+                    placeholder="Cargo o rol"
+                    value={appSettingsDraft.leaderRole}
+                    onChange={(event) => setAppSettingsDraft((current) => ({ ...current, leaderRole: event.target.value }))}
+                  />
+                  <input
+                    placeholder="Correo de contacto"
+                    value={appSettingsDraft.leaderEmail}
+                    onChange={(event) => setAppSettingsDraft((current) => ({ ...current, leaderEmail: event.target.value }))}
+                  />
+                  <button className="solid-button" disabled={savingAppSettings} type="submit">
+                    <IconDeviceFloppy size={18} stroke={1.8} />
+                    {savingAppSettings ? 'Guardando...' : 'Guardar firma'}
+                  </button>
+                </form>
+              </article>
+
               <article className="settings-card">
                 <div>
                   <h3 className="title-with-icon">
                     <IconFileImport size={20} stroke={1.8} />
                     Importar respaldo CSV
                   </h3>
-                  <p>Reemplaza o actualiza colaboradores y evaluaciones desde un archivo exportado previamente.</p>
+                  <p>Restaura colaboradores, evaluaciones, cierres por período y la firma del responsable desde un archivo exportado previamente.</p>
                 </div>
                 <button className="ghost-button" onClick={handleImport} type="button">
                   <IconFileImport size={18} stroke={1.8} />
@@ -1951,11 +2633,11 @@ export default function App() {
                     <IconDeviceFloppy size={20} stroke={1.8} />
                     Exportar respaldo CSV
                   </h3>
-                  <p>Genera un archivo compartible con colaboradores y evaluaciones para mover la base local o respaldarla.</p>
+                  <p>Genera un archivo compartible con colaboradores, evaluaciones, cierres por período y firma del responsable para mover la base local o respaldarla.</p>
                 </div>
                 <button className="solid-button" onClick={handleExport} type="button">
                   <IconDeviceFloppy size={18} stroke={1.8} />
-                  Exportar
+                  Exportar CSV
                 </button>
               </article>
 
@@ -1991,9 +2673,13 @@ export default function App() {
               <button className="ghost-button" onClick={() => setCloseDialogOpen(false)} type="button">
                 Cancelar
               </button>
-              <button className="danger-button" onClick={confirmClosePeriod} type="button">
+              <button className="ghost-button" disabled={closingFeedback} onClick={() => void confirmClosePeriod(true)} type="button">
+                <IconDeviceFloppy size={18} stroke={1.8} />
+                {closingFeedback ? 'Cerrando...' : 'Cerrar y descargar PDF'}
+              </button>
+              <button className="danger-button" disabled={closingFeedback} onClick={() => void confirmClosePeriod(false)} type="button">
                 <IconLock size={18} stroke={1.8} />
-                Confirmar cierre
+                {closingFeedback ? 'Cerrando...' : 'Confirmar cierre'}
               </button>
             </div>
           </div>
@@ -2042,6 +2728,24 @@ export default function App() {
               <button className="danger-button" onClick={() => void confirmClearData()} type="button">
                 <IconTrash size={18} stroke={1.8} />
                 Eliminar definitivamente
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {importDialogMessage ? (
+        <div className="confirm-overlay" onClick={() => setImportDialogMessage(null)} role="presentation">
+          <div className="confirm-dialog" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true">
+            <div className="confirm-dialog-copy">
+              <p className="panel-label">Importación</p>
+              <h3>Carga completada correctamente</h3>
+              <p>{importDialogMessage}</p>
+            </div>
+            <div className="confirm-dialog-actions">
+              <button className="ghost-button" onClick={() => setImportDialogMessage(null)} type="button">
+                <IconFileImport size={18} stroke={1.8} />
+                Entendido
               </button>
             </div>
           </div>

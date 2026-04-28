@@ -51,6 +51,38 @@
         "kind": "build",
         "isDefault": true
       }
+    },
+    {
+      "label": "App: Run PWA Local",
+      "type": "shell",
+      "command": "npm",
+      "args": ["run", "dev:pwa"],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "isBackground": true,
+      "problemMatcher": [
+        {
+          "owner": "custom",
+          "fileLocation": ["relative", "${workspaceFolder}"],
+          "pattern": [
+            {
+              "regexp": "^(.*)$",
+              "message": 1
+            }
+          ],
+          "background": {
+            "activeOnStart": true,
+            "beginsPattern": ".*",
+            "endsPattern": "ready in .*|Local:.*127\\.0\\.0\\.1:5173.*"
+          }
+        }
+      ],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": false
+      }
     }
   ]
 }

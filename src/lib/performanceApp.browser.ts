@@ -1,6 +1,8 @@
 import { deleteDB, openDB, type DBSchema, type IDBPDatabase } from 'idb';
 import Papa from 'papaparse';
 import type {
+  AppSettings,
+  BackupImportSummary,
   Collaborator,
   EvaluationFilters,
   EvaluationRecord,
@@ -18,35 +20,114 @@ type StoredStatus = {
   closedAt: string;
 };
 
-type FlatExportRow = {
-  collaborator_external_id: string;
-  collaborator_name: string;
-  role: string;
-  team: string;
-  period: string;
-  collaboration: number;
-  stakeholder_management: number;
-  ownership: number;
-  execution: number;
-  software_quality: number;
-  incident_response: number;
-  operational_discipline: number;
-  communication: number;
-  autonomy: number;
-  learning: number;
-  innovation_ai: number;
-  impact: number;
-  strengths: string;
-  improvements: string;
-  manager_notes: string;
-  feedback_session_notes: string;
-  yearly_improvement_plan: string;
-  growth_potential: number;
-  promotion_readiness: number;
-  score: number;
-  compensation_band: string;
-  merit_points: number;
+type StoredAppSettings = AppSettings & {
+  id: 'profile';
+  updatedAt: string;
 };
+
+type BackupRow = {
+  backup_version?: string;
+  row_type?: string;
+  collaborator_external_id?: string;
+  collaborator_name?: string;
+  collaborator_created_at?: string;
+  role?: string;
+  team?: string;
+  period?: string;
+  collaboration?: number | string;
+  stakeholder_management?: number | string;
+  ownership?: number | string;
+  execution?: number | string;
+  software_quality?: number | string;
+  incident_response?: number | string;
+  operational_discipline?: number | string;
+  communication?: number | string;
+  autonomy?: number | string;
+  learning?: number | string;
+  innovation_ai?: number | string;
+  impact?: number | string;
+  strengths?: string;
+  improvements?: string;
+  manager_notes?: string;
+  feedback_session_notes?: string;
+  yearly_improvement_plan?: string;
+  growth_potential?: number | string;
+  promotion_readiness?: number | string;
+  score?: number | string;
+  compensation_band?: string;
+  merit_points?: number | string;
+  period_closed?: string;
+  period_closed_at?: string;
+  leader_name?: string;
+  leader_role?: string;
+  leader_email?: string;
+};
+
+const BACKUP_COLUMNS: Array<keyof BackupRow> = [
+  'backup_version',
+  'row_type',
+  'leader_name',
+  'leader_role',
+  'leader_email',
+  'collaborator_external_id',
+  'collaborator_name',
+  'collaborator_created_at',
+  'role',
+  'team',
+  'period',
+  'collaboration',
+  'stakeholder_management',
+  'ownership',
+  'execution',
+  'software_quality',
+  'incident_response',
+  'operational_discipline',
+  'communication',
+  'autonomy',
+  'learning',
+  'innovation_ai',
+  'impact',
+  'strengths',
+  'improvements',
+  'manager_notes',
+  'feedback_session_notes',
+  'yearly_improvement_plan',
+  'growth_potential',
+  'promotion_readiness',
+  'score',
+  'compensation_band',
+  'merit_points',
+  'period_closed',
+  'period_closed_at',
+];
+
+const BACKUP_VERSION = '2';
+const SETTINGS_KEY = 'profile';
+
+function createDefaultAppSettings(): AppSettings {
+  return {
+    leaderName: '',
+    leaderRole: '',
+    leaderEmail: '',
+  };
+}
+
+function normalizeAppSettings(input: AppSettings): AppSettings {
+  return {
+    leaderName: input.leaderName.trim(),
+    leaderRole: input.leaderRole.trim(),
+    leaderEmail: input.leaderEmail.trim(),
+  };
+}
+
+function isTruthyFlag(value: string | undefined) {
+  const normalized = value?.trim().toLowerCase();
+  return normalized === '1' || normalized === 'true' || normalized === 'si' || normalized === 'sí' || normalized === 'yes';
+}
+
+function serializeBackupRow(row: BackupRow): BackupRow {
+  return Object.fromEntries(BACKUP_COLUMNS.map((column) => [column, row[column] ?? ''])) as BackupRow;
+}
 
 interface PerformanceFeedbackDB extends DBSchema {
   collaborators: {
@@ -74,6 +155,10 @@ interface PerformanceFeedbackDB extends DBSchema {
     indexes: {
       'by-collaborator-period': [number, string];
     };
+  };
+  settings: {
+    key: string;
+    value: StoredAppSettings;
   };
 }
 
@@ -104,21 +189,31 @@ async function syncStoredEvaluationInsights(db: IDBPDatabase<PerformanceFeedback
 
 function getDatabase() {
   if (!dbPromise) {
-    dbPromise = openDB<PerformanceFeedbackDB>('performance-feedback-pwa', 1, {
+    dbPromise = openDB<PerformanceFeedbackDB>('performance-feedback-pwa', 2, {
       upgrade(db) {
-        const collaborators = db.createObjectStore('collaborators', { keyPath: 'id', autoIncrement: true });
-        collaborators.createIndex('by-external-id', 'externalId', { unique: true });
-        collaborators.createIndex('by-team', 'team');
+        if (!db.objectStoreNames.contains('collaborators')) {
+          const collaborators = db.createObjectStore('collaborators', { keyPath: 'id', autoIncrement: true });
+          collaborators.createIndex('by-external-id', 'externalId', { unique: true });
+          collaborators.createIndex('by-team', 'team');
+        }
 
-        const evaluations = db.createObjectStore('evaluations', { keyPath: 'id', autoIncrement: true });
-        evaluations.createIndex('by-external-id', 'externalId', { unique: true });
-        evaluations.createIndex('by-collaborator-period', ['collaboratorId', 'period'], { unique: true });
-        evaluations.createIndex('by-collaborator-id', 'collaboratorId');
-        evaluations.createIndex('by-period', 'period');
-        evaluations.createIndex('by-updated-at', 'updatedAt');
+        if (!db.objectStoreNames.contains('evaluations')) {
+          const evaluations = db.createObjectStore('evaluations', { keyPath: 'id', autoIncrement: true });
+          evaluations.createIndex('by-external-id', 'externalId', { unique: true });
+          evaluations.createIndex('by-collaborator-period', ['collaboratorId', 'period'], { unique: true });
+          evaluations.createIndex('by-collaborator-id', 'collaboratorId');
+          evaluations.createIndex('by-period', 'period');
+          evaluations.createIndex('by-updated-at', 'updatedAt');
+        }
 
-        const statuses = db.createObjectStore('statuses', { keyPath: 'id' });
-        statuses.createIndex('by-collaborator-period', ['collaboratorId', 'period'], { unique: true });
+        if (!db.objectStoreNames.contains('statuses')) {
+          const statuses = db.createObjectStore('statuses', { keyPath: 'id' });
+          statuses.createIndex('by-collaborator-period', ['collaboratorId', 'period'], { unique: true });
+        }
+
+        if (!db.objectStoreNames.contains('settings')) {
+          db.createObjectStore('settings', { keyPath: 'id' });
+        }
       },
     }).then(async (db) => {
       await syncStoredEvaluationInsights(db);
@@ -182,6 +277,30 @@ async function clearAllData(): Promise<void> {
 
   hasUnsavedFeedback = false;
   syncBeforeUnloadListener();
+}
+
+async function getAppSettings(): Promise<AppSettings> {
+  const db = await getDatabase();
+  const row = await db.get('settings', SETTINGS_KEY);
+
+  if (!row) {
+    return createDefaultAppSettings();
+  }
+
+  return normalizeAppSettings(row);
+}
+
+async function saveAppSettings(input: AppSettings): Promise<AppSettings> {
+  const db = await getDatabase();
+  const normalized = normalizeAppSettings(input);
+
+  await db.put('settings', {
+    id: SETTINGS_KEY,
+    updatedAt: new Date().toISOString(),
+    ...normalized,
+  });
+
+  return normalized;
 }
 
 function compareText(left: string, right: string) {
@@ -366,51 +485,88 @@ function triggerDownload(filename: string, content: BlobPart, contentType: strin
 
 async function exportCsv(): Promise<{ canceled: boolean; filePath?: string }> {
   const db = await getDatabase();
-  const collaborators = await listCollaborators();
+  const [collaborators, evaluations, statuses, appSettings] = await Promise.all([
+    listCollaborators(),
+    db.getAll('evaluations'),
+    db.getAll('statuses'),
+    getAppSettings(),
+  ]);
   const collaboratorById = new Map(collaborators.map((item) => [item.id, item]));
-  const evaluations = await db.getAll('evaluations');
+  const statusByKey = new Map(statuses.map((item) => [makeStatusId(item.collaboratorId, item.period), item]));
 
-  const rows = evaluations
-    .map((evaluation) => {
-      const collaborator = collaboratorById.get(evaluation.collaboratorId);
-      if (!collaborator) {
-        return null;
-      }
+  const collaboratorRows: BackupRow[] = collaborators.map((collaborator) => ({
+    backup_version: BACKUP_VERSION,
+    row_type: 'collaborator',
+    collaborator_external_id: collaborator.externalId,
+    collaborator_name: collaborator.name,
+    collaborator_created_at: collaborator.createdAt,
+    role: collaborator.role,
+    team: collaborator.team,
+  }));
 
-      return {
-        collaborator_external_id: collaborator.externalId,
-        collaborator_name: collaborator.name,
-        role: collaborator.role,
-        team: collaborator.team,
-        period: evaluation.period,
-        collaboration: evaluation.collaboration,
-        stakeholder_management: evaluation.stakeholderManagement,
-        ownership: evaluation.ownership,
-        execution: evaluation.execution,
-        software_quality: evaluation.softwareQuality,
-        incident_response: evaluation.incidentResponse,
-        operational_discipline: evaluation.operationalDiscipline,
-        communication: evaluation.communication,
-        autonomy: evaluation.autonomy,
-        learning: evaluation.learning,
-        innovation_ai: evaluation.innovationAI,
-        impact: evaluation.impact,
-        strengths: evaluation.strengths,
-        improvements: evaluation.improvements,
-        manager_notes: evaluation.managerNotes,
-        feedback_session_notes: evaluation.feedbackSessionNotes,
-        yearly_improvement_plan: evaluation.yearlyImprovementPlan,
-        growth_potential: evaluation.growthPotential,
-        promotion_readiness: evaluation.promotionReadiness,
-        score: evaluation.score,
-        compensation_band: evaluation.compensationBand,
-        merit_points: evaluation.meritPoints,
-      } satisfies FlatExportRow;
-    })
-    .filter((row): row is FlatExportRow => Boolean(row))
-    .sort((left, right) => compareText(left.team, right.team) || compareText(left.collaborator_name, right.collaborator_name) || right.period.localeCompare(left.period));
+  const evaluationRows: BackupRow[] = [];
+  for (const evaluation of evaluations) {
+    const collaborator = collaboratorById.get(evaluation.collaboratorId);
+    if (!collaborator) {
+      continue;
+    }
 
-  const csv = Papa.unparse(rows);
+    const status = statusByKey.get(makeStatusId(evaluation.collaboratorId, evaluation.period));
+    evaluationRows.push({
+      backup_version: BACKUP_VERSION,
+      row_type: 'evaluation',
+      collaborator_external_id: collaborator.externalId,
+      collaborator_name: collaborator.name,
+      collaborator_created_at: collaborator.createdAt,
+      role: collaborator.role,
+      team: collaborator.team,
+      period: evaluation.period,
+      collaboration: evaluation.collaboration,
+      stakeholder_management: evaluation.stakeholderManagement,
+      ownership: evaluation.ownership,
+      execution: evaluation.execution,
+      software_quality: evaluation.softwareQuality,
+      incident_response: evaluation.incidentResponse,
+      operational_discipline: evaluation.operationalDiscipline,
+      communication: evaluation.communication,
+      autonomy: evaluation.autonomy,
+      learning: evaluation.learning,
+      innovation_ai: evaluation.innovationAI,
+      impact: evaluation.impact,
+      strengths: evaluation.strengths,
+      improvements: evaluation.improvements,
+      manager_notes: evaluation.managerNotes,
+      feedback_session_notes: evaluation.feedbackSessionNotes,
+      yearly_improvement_plan: evaluation.yearlyImprovementPlan,
+      growth_potential: evaluation.growthPotential,
+      promotion_readiness: evaluation.promotionReadiness,
+      score: evaluation.score,
+      compensation_band: evaluation.compensationBand,
+      merit_points: evaluation.meritPoints,
+      period_closed: status ? 'true' : 'false',
+      period_closed_at: status?.closedAt ?? '',
+    });
+  }
+  evaluationRows.sort(
+    (left, right) =>
+      compareText(left.team ?? '', right.team ?? '') ||
+      compareText(left.collaborator_name ?? '', right.collaborator_name ?? '') ||
+      (right.period ?? '').localeCompare(left.period ?? ''),
+  );
+
+  const rows: BackupRow[] = [
+    {
+      backup_version: BACKUP_VERSION,
+      row_type: 'settings',
+      leader_name: appSettings.leaderName,
+      leader_role: appSettings.leaderRole,
+      leader_email: appSettings.leaderEmail,
+    },
+    ...collaboratorRows,
+    ...evaluationRows,
+  ];
+
+  const csv = Papa.unparse(rows.map(serializeBackupRow));
   triggerDownload('evaluacion-desempeno-backup.csv', csv, 'text/csv;charset=utf-8');
 
   return { canceled: false, filePath: 'descargado en el navegador' };
@@ -464,49 +620,124 @@ function pickCsvFile(): Promise<File | null> {
   });
 }
 
-async function importCsv(): Promise<{ canceled: boolean; imported?: { collaborators: number; evaluations: number } }> {
+async function importCsv(): Promise<{ canceled: boolean; imported?: BackupImportSummary }> {
   const file = await pickCsvFile();
   if (!file) {
     return { canceled: true };
   }
 
   const csvContent = await file.text();
-  const parsed = Papa.parse<FlatExportRow>(csvContent, {
+  const parsed = Papa.parse<BackupRow>(csvContent, {
     header: true,
     skipEmptyLines: true,
     transformHeader: (header: string) => header.trim(),
   });
 
-  let collaboratorsImported = 0;
-  let evaluationsImported = 0;
+  const db = await getDatabase();
+  const settingsRows: BackupRow[] = [];
+  const collaboratorRows: BackupRow[] = [];
+  const evaluationRows: BackupRow[] = [];
 
   for (const row of parsed.data) {
-    if (!row.collaborator_external_id || !row.period) {
+    const rowType = row.row_type?.trim().toLowerCase();
+
+    if (rowType === 'settings') {
+      settingsRows.push(row);
       continue;
     }
 
-    const db = await getDatabase();
-    const existing = await db.getFromIndex('collaborators', 'by-external-id', row.collaborator_external_id);
-    const collaborator = existing
-      ? await updateCollaborator(existing.id, {
-          name: row.collaborator_name,
-          role: row.role,
-          team: row.team,
-        })
-      : await createCollaborator({
-          name: row.collaborator_name,
-          role: row.role,
-          team: row.team,
-        }).then(async (created) => {
-          await db.put('collaborators', { ...created, externalId: row.collaborator_external_id });
-          return { ...created, externalId: row.collaborator_external_id };
-        });
+    if (rowType === 'collaborator') {
+      collaboratorRows.push(row);
+      continue;
+    }
 
-    collaboratorsImported += 1;
+    if (rowType === 'evaluation') {
+      evaluationRows.push(row);
+      continue;
+    }
+
+    if (row.collaborator_external_id && row.period) {
+      evaluationRows.push(row);
+      continue;
+    }
+
+    if (row.collaborator_external_id) {
+      collaboratorRows.push(row);
+    }
+  }
+
+  let settingsUpdated = false;
+  let evaluationsImported = 0;
+  let statusesImported = 0;
+  const importedCollaboratorIds = new Set<string>();
+  const collaboratorIdByExternalId = new Map<string, number>();
+
+  async function ensureCollaborator(row: BackupRow) {
+    const externalId = row.collaborator_external_id?.trim();
+    if (!externalId) {
+      return null;
+    }
+
+    const cachedId = collaboratorIdByExternalId.get(externalId);
+    if (cachedId) {
+      importedCollaboratorIds.add(externalId);
+      return cachedId;
+    }
+
+    const existing = await db.getFromIndex('collaborators', 'by-external-id', externalId);
+    if (existing) {
+      const updated: Collaborator = {
+        ...existing,
+        createdAt: row.collaborator_created_at?.trim() || existing.createdAt,
+        name: row.collaborator_name?.trim() || existing.name,
+        role: row.role?.trim() || existing.role,
+        team: row.team?.trim() || existing.team,
+      };
+      await db.put('collaborators', updated);
+      collaboratorIdByExternalId.set(externalId, updated.id);
+      importedCollaboratorIds.add(externalId);
+      return updated.id;
+    }
+
+    const payload: Collaborator = {
+      id: 0,
+      externalId,
+      createdAt: row.collaborator_created_at?.trim() || new Date().toISOString(),
+      name: row.collaborator_name?.trim() || 'Colaborador',
+      role: row.role?.trim() || '',
+      team: row.team?.trim() || '',
+    };
+    const id = await db.add('collaborators', payload as Collaborator);
+    collaboratorIdByExternalId.set(externalId, id);
+    importedCollaboratorIds.add(externalId);
+    return id;
+  }
+
+  for (const row of collaboratorRows) {
+    await ensureCollaborator(row);
+  }
+
+  const latestSettingsRow = settingsRows.at(-1);
+  if (latestSettingsRow) {
+    await saveAppSettings({
+      leaderName: latestSettingsRow.leader_name ?? '',
+      leaderRole: latestSettingsRow.leader_role ?? '',
+      leaderEmail: latestSettingsRow.leader_email ?? '',
+    });
+    settingsUpdated = true;
+  }
+
+  for (const row of evaluationRows) {
+    const collaboratorId = await ensureCollaborator(row);
+    const normalizedPeriod = row.period?.trim();
+
+    if (!collaboratorId || !normalizedPeriod) {
+      continue;
+    }
 
     await saveEvaluation({
-      collaboratorId: collaborator.id,
-      period: row.period,
+      collaboratorId,
+      period: normalizedPeriod,
       collaboration: clampScore(Number(row.collaboration)),
       stakeholderManagement: clampScore(Number(row.stakeholder_management)),
       ownership: clampScore(Number(row.ownership)),
@@ -527,13 +758,27 @@ async function importCsv(): Promise<{ canceled: boolean; imported?: { collaborat
       growthPotential: clampScore(Number(row.growth_potential)),
       promotionReadiness: clampScore(Number(row.promotion_readiness)),
     });
-
     evaluationsImported += 1;
+
+    if (isTruthyFlag(row.period_closed)) {
+      await db.put('statuses', {
+        id: makeStatusId(collaboratorId, normalizedPeriod),
+        collaboratorId,
+        period: normalizedPeriod,
+        closedAt: row.period_closed_at?.trim() || new Date().toISOString(),
+      });
+      statusesImported += 1;
+    }
   }
 
   return {
     canceled: false,
-    imported: { collaborators: collaboratorsImported, evaluations: evaluationsImported },
+    imported: {
+      collaborators: importedCollaboratorIds.size,
+      evaluations: evaluationsImported,
+      statuses: statusesImported,
+      settingsUpdated,
+    },
   };
 }
 
@@ -562,8 +807,10 @@ const browserPerformanceApp: Window['performanceApp'] = {
   getEvaluation,
   listPeriods,
   getPeriodStatus,
+  getAppSettings,
   closePeriod,
   saveEvaluation,
+  saveAppSettings,
   getRanking,
   setUnsavedFeedback(hasChanges) {
     hasUnsavedFeedback = hasChanges;

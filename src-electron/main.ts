@@ -6,6 +6,7 @@ import {
   closePeriod,
   createCollaborator,
   exportCsv,
+  getAppSettings,
   getEvaluation,
   getLatestEvaluation,
   getPeriodStatus,
@@ -14,6 +15,7 @@ import {
   listPeriods,
   listCollaborators,
   saveEvaluation,
+  saveAppSettings,
   updateCollaborator,
 } from './database';
 
@@ -82,9 +84,11 @@ app.whenReady().then(() => {
     getEvaluation(collaboratorId, period),
   );
   ipcMain.handle('evaluations:list-periods', () => listPeriods());
+  ipcMain.handle('settings:get', () => getAppSettings());
   ipcMain.handle('periods:get-status', (_event, collaboratorId: number, period: string) => getPeriodStatus(collaboratorId, period));
   ipcMain.handle('periods:close', (_event, collaboratorId: number, period: string) => closePeriod(collaboratorId, period));
   ipcMain.handle('evaluations:save', (_event, input) => saveEvaluation(input));
+  ipcMain.handle('settings:save', (_event, input) => saveAppSettings(input));
   ipcMain.handle('ranking:list', (_event, filters) => getRanking(filters));
   ipcMain.handle('storage:clear-all', () => clearAllData());
   ipcMain.handle('window:discard-unsaved-and-close', (event) => {

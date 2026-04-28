@@ -6,6 +6,8 @@ import { dirname, join } from 'node:path';
 import { parse } from 'csv-parse/sync';
 import { stringify } from 'csv-stringify/sync';
 import type {
+  AppSettings,
+  BackupImportSummary,
   Collaborator,
   EvaluationFilters,
   EvaluationRecord,
@@ -15,34 +17,108 @@ import type {
 } from './types';
 
 type FlatExportRow = {
-  collaborator_external_id: string;
-  collaborator_name: string;
-  role: string;
-  team: string;
-  period: string;
-  collaboration: number;
-  stakeholder_management: number;
-  ownership: number;
-  execution: number;
-  software_quality: number;
-  incident_response: number;
-  operational_discipline: number;
-  communication: number;
-  autonomy: number;
-  learning: number;
-  innovation_ai: number;
-  impact: number;
-  strengths: string;
-  improvements: string;
-  manager_notes: string;
-  feedback_session_notes: string;
-  yearly_improvement_plan: string;
-  growth_potential: number;
-  promotion_readiness: number;
-  score: number;
-  compensation_band: string;
-  merit_points: number;
+  backup_version?: string;
+  row_type?: string;
+  collaborator_external_id?: string;
+  collaborator_name?: string;
+  collaborator_created_at?: string;
+  role?: string;
+  team?: string;
+  period?: string;
+  collaboration?: number | string;
+  stakeholder_management?: number | string;
+  ownership?: number | string;
+  execution?: number | string;
+  software_quality?: number | string;
+  incident_response?: number | string;
+  operational_discipline?: number | string;
+  communication?: number | string;
+  autonomy?: number | string;
+  learning?: number | string;
+  innovation_ai?: number | string;
+  impact?: number | string;
+  strengths?: string;
+  improvements?: string;
+  manager_notes?: string;
+  feedback_session_notes?: string;
+  yearly_improvement_plan?: string;
+  growth_potential?: number | string;
+  promotion_readiness?: number | string;
+  score?: number | string;
+  compensation_band?: string;
+  merit_points?: number | string;
+  period_closed?: string;
+  period_closed_at?: string;
+  leader_name?: string;
+  leader_role?: string;
+  leader_email?: string;
 };
+
+const BACKUP_COLUMNS: Array<keyof FlatExportRow> = [
+  'backup_version',
+  'row_type',
+  'leader_name',
+  'leader_role',
+  'leader_email',
+  'collaborator_external_id',
+  'collaborator_name',
+  'collaborator_created_at',
+  'role',
+  'team',
+  'period',
+  'collaboration',
+  'stakeholder_management',
+  'ownership',
+  'execution',
+  'software_quality',
+  'incident_response',
+  'operational_discipline',
+  'communication',
+  'autonomy',
+  'learning',
+  'innovation_ai',
+  'impact',
+  'strengths',
+  'improvements',
+  'manager_notes',
+  'feedback_session_notes',
+  'yearly_improvement_plan',
+  'growth_potential',
+  'promotion_readiness',
+  'score',
+  'compensation_band',
+  'merit_points',
+  'period_closed',
+  'period_closed_at',
+];
+
+const BACKUP_VERSION = '2';
+const SETTINGS_KEY = 'profile';
+
+function createDefaultAppSettings(): AppSettings {
+  return {
+    leaderName: '',
+    leaderRole: '',
+    leaderEmail: '',
+  };
+}
+
+function normalizeAppSettings(input: AppSettings): AppSettings {
+  return {
+    leaderName: input.leaderName.trim(),
+    leaderRole: input.leaderRole.trim(),
+    leaderEmail: input.leaderEmail.trim(),
+  };
+}
+
+function isTruthyFlag(value: string | undefined) {
+  const normalized = value?.trim().toLowerCase();
+  return normalized === '1' || normalized === 'true' || normalized === 'si' || normalized === 'sí' || normalized === 'yes';
+}
+
+function serializeBackupRow(row: FlatExportRow): FlatExportRow {
+  return Object.fromEntries(BACKUP_COLUMNS.map((column) => [column, row[column] ?? ''])) as FlatExportRow;
+}
 
 const databaseDirectory = app.isPackaged
   ? app.getPath('userData')
@@ -107,6 +183,12 @@ db.exec(`
     closed_at TEXT NOT NULL,
     PRIMARY KEY (collaborator_id, period),
     FOREIGN KEY (collaborator_id) REFERENCES collaborators(id) ON DELETE CASCADE
+  );
+
+  CREATE TABLE IF NOT EXISTS app_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
 `);
 
@@ -392,6 +474,7 @@ export function closePeriod(collaboratorId: number, period: string): PeriodStatu
 
 export function clearAllData(): void {
   const clearTransaction = db.transaction(() => {
+    db.prepare('DELETE FROM app_settings').run();
     db.prepare('DELETE FROM evaluation_statuses').run();
     db.prepare('DELETE FROM period_statuses').run();
     db.prepare('DELETE FROM evaluations').run();
@@ -507,11 +590,40 @@ export function getRanking(filters: EvaluationFilters): RankingRow[] {
   return rankingByPeriodStatement.all(filters.period, team, team) as RankingRow[];
 }
 
+export function getAppSettings(): AppSettings {
+  const row = db.prepare('SELECT value FROM app_settings WHERE key = ?').get(SETTINGS_KEY) as { value: string } | undefined;
+  if (!row) {
+    return createDefaultAppSettings();
+  }
+
+  try {
+    return normalizeAppSettings(JSON.parse(row.value) as AppSettings);
+  } catch {
+    return createDefaultAppSettings();
+  }
+}
+
+export function saveAppSettings(input: AppSettings): AppSettings {
+  const normalized = normalizeAppSettings(input);
+  db.prepare(`
+    INSERT INTO app_settings (key, value, updated_at)
+    VALUES (?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(key) DO UPDATE SET
+      value = excluded.value,
+      updated_at = CURRENT_TIMESTAMP
+  `).run(SETTINGS_KEY, JSON.stringify(normalized));
+
+  return normalized;
+}
+
 export function exportCsv(): string {
-  const rows = db.prepare(`
+  const collaborators = listCollaborators();
+  const evaluations = db.prepare(`
     SELECT
+      c.id AS collaborator_id,
       c.external_id AS collaborator_external_id,
       c.name AS collaborator_name,
+      c.created_at AS collaborator_created_at,
       c.role,
       c.team,
       e.period,
@@ -540,20 +652,90 @@ export function exportCsv(): string {
     FROM evaluations e
     INNER JOIN collaborators c ON c.id = e.collaborator_id
     ORDER BY c.team COLLATE NOCASE ASC, c.name COLLATE NOCASE ASC, e.period DESC
-  `).all() as FlatExportRow[];
+  `).all() as Array<FlatExportRow & { collaborator_id: number }>;
+  const statuses = db.prepare(`
+    SELECT collaborator_id AS collaboratorId, period, closed_at AS closedAt
+    FROM evaluation_statuses
+  `).all() as Array<{ collaboratorId: number; period: string; closedAt: string }>;
+  const statusByKey = new Map(statuses.map((item) => [`${item.collaboratorId}::${item.period}`, item]));
+  const appSettings = getAppSettings();
 
-  return stringify(rows, { header: true });
+  const rows: FlatExportRow[] = [
+    {
+      backup_version: BACKUP_VERSION,
+      row_type: 'settings',
+      leader_name: appSettings.leaderName,
+      leader_role: appSettings.leaderRole,
+      leader_email: appSettings.leaderEmail,
+    },
+    ...collaborators.map((collaborator) => ({
+      backup_version: BACKUP_VERSION,
+      row_type: 'collaborator',
+      collaborator_external_id: collaborator.externalId,
+      collaborator_name: collaborator.name,
+      collaborator_created_at: collaborator.createdAt,
+      role: collaborator.role,
+      team: collaborator.team,
+    })),
+    ...evaluations.map((evaluation) => {
+      const status = statusByKey.get(`${evaluation.collaborator_id}::${evaluation.period}`);
+      return {
+        ...evaluation,
+        backup_version: BACKUP_VERSION,
+        row_type: 'evaluation',
+        period_closed: status ? 'true' : 'false',
+        period_closed_at: status?.closedAt ?? '',
+      } satisfies FlatExportRow;
+    }),
+  ];
+
+  return stringify(rows.map(serializeBackupRow), { header: true, columns: BACKUP_COLUMNS });
 }
 
-export function importCsv(csvContent: string): { collaborators: number; evaluations: number } {
+export function importCsv(csvContent: string): BackupImportSummary {
   const rows = parse(csvContent, {
     columns: true,
     skip_empty_lines: true,
     trim: true,
   }) as FlatExportRow[];
 
-  let collaboratorsImported = 0;
+  const settingsRows: FlatExportRow[] = [];
+  const collaboratorRows: FlatExportRow[] = [];
+  const evaluationRows: FlatExportRow[] = [];
+
+  for (const row of rows) {
+    const rowType = row.row_type?.trim().toLowerCase();
+
+    if (rowType === 'settings') {
+      settingsRows.push(row);
+      continue;
+    }
+
+    if (rowType === 'collaborator') {
+      collaboratorRows.push(row);
+      continue;
+    }
+
+    if (rowType === 'evaluation') {
+      evaluationRows.push(row);
+      continue;
+    }
+
+    if (row.collaborator_external_id && row.period) {
+      evaluationRows.push(row);
+      continue;
+    }
+
+    if (row.collaborator_external_id) {
+      collaboratorRows.push(row);
+    }
+  }
+
+  const importedCollaboratorIds = new Set<string>();
+  const collaboratorIdByExternalId = new Map<string, number>();
   let evaluationsImported = 0;
+  let statusesImported = 0;
+  let settingsUpdated = false;
 
   const insertCollaborator = db.prepare(`
     INSERT INTO collaborators (external_id, name, role, team)
@@ -564,22 +746,65 @@ export function importCsv(csvContent: string): { collaborators: number; evaluati
       team = excluded.team
   `);
 
-  for (const row of rows) {
-    insertCollaborator.run({
-      external_id: row.collaborator_external_id,
-      name: row.collaborator_name,
-      role: row.role,
-      team: row.team,
-    });
-    collaboratorsImported += 1;
+  const updateCollaboratorCreatedAt = db.prepare(`
+    UPDATE collaborators
+    SET created_at = ?
+    WHERE external_id = ?
+  `);
 
-    const collaborator = db
-      .prepare('SELECT id FROM collaborators WHERE external_id = ?')
-      .get(row.collaborator_external_id) as { id: number };
+  function ensureCollaborator(row: FlatExportRow) {
+    const externalId = row.collaborator_external_id?.trim();
+    if (!externalId) {
+      return null;
+    }
+
+    const cachedId = collaboratorIdByExternalId.get(externalId);
+    if (cachedId) {
+      importedCollaboratorIds.add(externalId);
+      return cachedId;
+    }
+
+    insertCollaborator.run({
+      external_id: externalId,
+      name: row.collaborator_name?.trim() || 'Colaborador',
+      role: row.role?.trim() || '',
+      team: row.team?.trim() || '',
+    });
+
+    if (row.collaborator_created_at?.trim()) {
+      updateCollaboratorCreatedAt.run(row.collaborator_created_at.trim(), externalId);
+    }
+
+    const collaborator = db.prepare('SELECT id FROM collaborators WHERE external_id = ?').get(externalId) as { id: number };
+    collaboratorIdByExternalId.set(externalId, collaborator.id);
+    importedCollaboratorIds.add(externalId);
+    return collaborator.id;
+  }
+
+  for (const row of collaboratorRows) {
+    ensureCollaborator(row);
+  }
+
+  const latestSettingsRow = settingsRows.at(-1);
+  if (latestSettingsRow) {
+    saveAppSettings({
+      leaderName: latestSettingsRow.leader_name ?? '',
+      leaderRole: latestSettingsRow.leader_role ?? '',
+      leaderEmail: latestSettingsRow.leader_email ?? '',
+    });
+    settingsUpdated = true;
+  }
+
+  for (const row of evaluationRows) {
+    const collaboratorId = ensureCollaborator(row);
+    const normalizedPeriod = row.period?.trim();
+    if (!collaboratorId || !normalizedPeriod) {
+      continue;
+    }
 
     const evaluationInput: EvaluationRecord = {
-      collaboratorId: collaborator.id,
-      period: row.period,
+      collaboratorId,
+      period: normalizedPeriod,
       collaboration: clampScore(Number(row.collaboration)),
       stakeholderManagement: clampScore(Number(row.stakeholder_management)),
       ownership: clampScore(Number(row.ownership)),
@@ -603,7 +828,21 @@ export function importCsv(csvContent: string): { collaborators: number; evaluati
 
     saveEvaluation(evaluationInput);
     evaluationsImported += 1;
+
+    if (isTruthyFlag(row.period_closed)) {
+      db.prepare(`
+        INSERT INTO evaluation_statuses (collaborator_id, period, closed_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(collaborator_id, period) DO UPDATE SET closed_at = excluded.closed_at
+      `).run(collaboratorId, normalizedPeriod, row.period_closed_at?.trim() || new Date().toISOString());
+      statusesImported += 1;
+    }
   }
 
-  return { collaborators: collaboratorsImported, evaluations: evaluationsImported };
+  return {
+    collaborators: importedCollaboratorIds.size,
+    evaluations: evaluationsImported,
+    statuses: statusesImported,
+    settingsUpdated,
+  };
 }

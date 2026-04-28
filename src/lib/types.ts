@@ -7,6 +7,12 @@ export type Collaborator = {
   createdAt: string;
 };
 
+export type AppSettings = {
+  leaderName: string;
+  leaderRole: string;
+  leaderEmail: string;
+};
+
 export type EvaluationRecord = {
   collaboratorId: number;
   period: string;
@@ -62,4 +68,11 @@ export type RankingRow = {
   compensationBand: string;
   meritPoints: number;
   managerSignal: string;
+};
+
+export type BackupImportSummary = {
+  collaborators: number;
+  evaluations: number;
+  statuses: number;
+  settingsUpdated: boolean;
 };
