@@ -81,6 +81,27 @@ let dbPromise: Promise<IDBPDatabase<PerformanceFeedbackDB>> | null = null;
 let beforeUnloadRegistered = false;
 let hasUnsavedFeedback = false;
 
+async function syncStoredEvaluationInsights(db: IDBPDatabase<PerformanceFeedbackDB>) {
+  const evaluations = await db.getAll('evaluations');
+
+  for (const evaluation of evaluations) {
+    const nextInsights = calculateInsights(evaluation);
+    if (
+      evaluation.score === nextInsights.score &&
+      evaluation.meritPoints === nextInsights.meritPoints &&
+      evaluation.compensationBand === nextInsights.compensationBand
+    ) {
+      continue;
+    }
+
+    await db.put('evaluations', {
+      ...evaluation,
+      ...nextInsights,
+      updatedAt: evaluation.updatedAt,
+    });
+  }
+}
+
 function getDatabase() {
   if (!dbPromise) {
     dbPromise = openDB<PerformanceFeedbackDB>('performance-feedback-pwa', 1, {
@@ -99,6 +120,9 @@ function getDatabase() {
         const statuses = db.createObjectStore('statuses', { keyPath: 'id' });
         statuses.createIndex('by-collaborator-period', ['collaboratorId', 'period'], { unique: true });
       },
+    }).then(async (db) => {
+      await syncStoredEvaluationInsights(db);
+      return db;
     });
   }
 

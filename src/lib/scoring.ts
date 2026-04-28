@@ -24,7 +24,7 @@ export function calculatePreview(input: EvaluationRecord) {
   } else if (score >= 76 && input.promotionReadiness >= 3) {
     compensationBand = 'Prioridad media';
   } else if (score >= 66) {
-    compensationBand = 'Mantener en observacion';
+    compensationBand = 'Mantener en observación';
   }
 
   return { score, meritPoints, compensationBand };

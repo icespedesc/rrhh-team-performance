@@ -218,6 +218,36 @@ const evaluationStatusStatement = db.prepare(`
   LIMIT 1
 `);
 
+const storedEvaluationsStatement = db.prepare(`
+  SELECT
+    id,
+    collaborator_id AS collaboratorId,
+    period,
+    collaboration,
+    stakeholder_management AS stakeholderManagement,
+    ownership,
+    execution,
+    software_quality AS softwareQuality,
+    incident_response AS incidentResponse,
+    operational_discipline AS operationalDiscipline,
+    communication,
+    autonomy,
+    learning,
+    innovation_ai AS innovationAI,
+    impact,
+    strengths,
+    improvements,
+    manager_notes AS managerNotes,
+    feedback_session_notes AS feedbackSessionNotes,
+    yearly_improvement_plan AS yearlyImprovementPlan,
+    growth_potential AS growthPotential,
+    promotion_readiness AS promotionReadiness,
+    score,
+    compensation_band AS compensationBand,
+    merit_points AS meritPoints
+  FROM evaluations
+`);
+
 function clampScore(value: number): number {
   return Math.max(1, Math.min(5, value));
 }
@@ -265,6 +295,36 @@ function resolvePeriodStatus(collaboratorId: number, period: string): PeriodStat
     closedAt: row?.closedAt ?? null,
   };
 }
+
+function syncStoredEvaluationInsights() {
+  const evaluations = storedEvaluationsStatement.all() as Array<
+    EvaluationRecord & { id: number; score: number; compensationBand: string; meritPoints: number }
+  >;
+  const updateInsightsStatement = db.prepare(`
+    UPDATE evaluations
+    SET score = ?, compensation_band = ?, merit_points = ?
+    WHERE id = ?
+  `);
+
+  const updateInsightsTransaction = db.transaction(() => {
+    for (const evaluation of evaluations) {
+      const nextInsights = calculateInsights(evaluation);
+      if (
+        evaluation.score === nextInsights.score &&
+        evaluation.meritPoints === nextInsights.meritPoints &&
+        evaluation.compensationBand === nextInsights.compensationBand
+      ) {
+        continue;
+      }
+
+      updateInsightsStatement.run(nextInsights.score, nextInsights.compensationBand, nextInsights.meritPoints, evaluation.id);
+    }
+  });
+
+  updateInsightsTransaction();
+}
+
+syncStoredEvaluationInsights();
 
 export function createCollaborator(input: {
   name: string;
