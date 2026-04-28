@@ -767,10 +767,22 @@ async function downloadFeedbackPdf(input: FeedbackPdfInput) {
     dateStyle: 'long',
     timeStyle: 'short',
   }).format(new Date(input.generatedAt));
-  const recommendation = getCompensationCopy(input.preview.compensationBand).label;
   const coverTop = 40;
   const coverHeight = 316;
   const coverBottom = coverTop + coverHeight;
+  const executiveSummaryText =
+    input.feedbackHighlights.focusAreas.length > 0
+      ? `Este documento resume los principales puntos conversados en la reunión 1:1, incluyendo fortalezas observadas y focos de desarrollo para el próximo período.`
+      : `Este documento resume los principales puntos conversados en la reunión 1:1 y deja por escrito las fortalezas observadas y los acuerdos de seguimiento para el próximo período.`;
+  const coverScoreCaption =
+    input.feedbackHighlights.focusAreas.length > 0
+      ? `${input.feedbackHighlights.strengths.length} fortalezas destacadas y ${input.feedbackHighlights.focusAreas.length} foco${input.feedbackHighlights.focusAreas.length === 1 ? '' : 's'} de desarrollo conversado${input.feedbackHighlights.focusAreas.length === 1 ? '' : 's'}.`
+      : `${input.feedbackHighlights.strengths.length} fortalezas destacadas conversadas para este período.`;
+  const detailSummaryTitle = 'Resumen de la conversación';
+  const detailSummaryBody =
+    input.evaluation.feedbackSessionNotes.trim() ||
+    input.evaluation.yearlyImprovementPlan.trim() ||
+    executiveSummaryText;
 
   function getFittedFontSize(text: string, maxWidth: number, preferredSize: number, minSize: number) {
     let currentSize = preferredSize;
@@ -929,8 +941,8 @@ async function downloadFeedbackPdf(input: FeedbackPdfInput) {
   doc.text(`${input.collaborator.role} · ${input.collaborator.team}`, margin + 28, coverTop + 118);
   doc.text(`Período ${input.evaluation.period}`, margin + 28, coverTop + 138);
 
-  drawPill(margin + 28, coverTop + 166, 130, `Estado: ${input.feedbackStage.label}`);
-  drawPill(margin + 166, coverTop + 166, contentWidth - 194, `Recomendación: ${recommendation}`);
+  drawPill(margin + 28, coverTop + 166, 156, 'Respaldo de feedback 1:1');
+  drawPill(margin + 194, coverTop + 166, contentWidth - 222, `Preparado para ${input.collaborator.name}`);
 
   const summaryX = margin + 28;
   const summaryY = coverTop + 202;
@@ -949,15 +961,11 @@ async function downloadFeedbackPdf(input: FeedbackPdfInput) {
   doc.setFontSize(30);
   doc.setTextColor(21, 34, 56);
   doc.text(formatScore(input.preview.score), summaryX + 18, summaryY + 56);
-  addParagraphBlock(recommendation, summaryX + 18, summaryY + 76, summaryLeftWidth - 36, {
+  addParagraphBlock(coverScoreCaption, summaryX + 18, summaryY + 76, summaryLeftWidth - 36, {
     color: [38, 73, 182],
-    fontSize: 11,
+    fontSize: 10,
     fontStyle: 'bold',
   });
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(10);
-  doc.setTextColor(75, 85, 104);
-  doc.text(`Mérito: ${input.preview.meritPoints} pts`, summaryX + 18, summaryY + 94);
 
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(10);
@@ -989,7 +997,7 @@ async function downloadFeedbackPdf(input: FeedbackPdfInput) {
   doc.setTextColor(60, 73, 97);
   doc.text('Documento de apoyo para la conversación 1:1.', margin + 36, coverBottom + 44);
   addParagraphBlock(
-    'Resume fortalezas, focos de desarrollo, acuerdos y seguimiento esperado para el período evaluado.',
+    executiveSummaryText,
     margin + 36,
     coverBottom + 64,
     contentWidth - 72,
@@ -1027,12 +1035,11 @@ async function downloadFeedbackPdf(input: FeedbackPdfInput) {
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(11);
   doc.setTextColor(38, 73, 182);
-  doc.text(`Estado: ${input.feedbackStage.label}`, margin + 24, cursorY + 28);
-  doc.text(`Recomendación: ${recommendation}`, margin + 24, cursorY + 48);
+  doc.text(detailSummaryTitle, margin + 24, cursorY + 28);
   doc.setFontSize(10);
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(75, 85, 104);
-  doc.text(input.feedbackStage.description, margin + 24, cursorY + 69, { maxWidth: contentWidth - 168 });
+  doc.text(detailSummaryBody, margin + 24, cursorY + 50, { maxWidth: contentWidth - 168 });
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(30);
   doc.setTextColor(21, 34, 56);
@@ -1040,8 +1047,8 @@ async function downloadFeedbackPdf(input: FeedbackPdfInput) {
   doc.text(scoreText, pageWidth - margin - doc.getTextWidth(scoreText), cursorY + 42);
   doc.setFontSize(10);
   doc.setTextColor(75, 85, 104);
-  const meritText = `${input.preview.meritPoints} pts mérito`;
-  doc.text(meritText, pageWidth - margin - doc.getTextWidth(meritText), cursorY + 64);
+  const scoreSupportText = 'Síntesis del desempeño conversado';
+  doc.text(scoreSupportText, pageWidth - margin - doc.getTextWidth(scoreSupportText), cursorY + 64);
   cursorY += 118;
 
   addSection(
