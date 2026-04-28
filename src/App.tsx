@@ -891,9 +891,9 @@ async function downloadFeedbackPdf(input: FeedbackPdfInput) {
   doc.setFillColor(255, 255, 255);
   doc.roundedRect(pageWidth - margin - 210, coverTop + 20, 182, 56, 18, 18, 'F');
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(16);
+  doc.setFontSize(getFittedFontSize(appBrandName, 150, 16, 11));
   doc.setTextColor(21, 34, 56);
-  doc.text(appBrandName, pageWidth - margin - 194, coverTop + 52);
+  doc.text(appBrandName, pageWidth - margin - 119, coverTop + 52, { align: 'center' });
 
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(32);
@@ -1028,7 +1028,10 @@ async function downloadFeedbackPdf(input: FeedbackPdfInput) {
 
   addSection(
     'Detalle de atributos',
-    criteria.map((criterion) => `• ${criterion.label}: ${input.evaluation[criterion.key]}/5 (${ratingCopy[input.evaluation[criterion.key]] ?? `Nivel ${input.evaluation[criterion.key]}`})`),
+    criteria.map(
+      (criterion) =>
+        `• ${criterion.label}: ${input.evaluation[criterion.key]}/5 (${ratingCopy[input.evaluation[criterion.key]] ?? `Nivel ${input.evaluation[criterion.key]}`}). ${criterion.hint}`,
+    ),
   );
 
   addSection(
