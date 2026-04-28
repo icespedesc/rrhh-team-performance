@@ -20,6 +20,10 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
+  if (event.request.cache === 'only-if-cached' && event.request.mode !== 'same-origin') {
+    return;
+  }
+
   const url = new URL(event.request.url);
   if (url.origin !== self.location.origin) {
     return;

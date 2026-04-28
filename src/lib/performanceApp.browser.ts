@@ -595,27 +595,15 @@ async function exportCsv(): Promise<{ canceled: boolean; filePath?: string }> {
   return { canceled: false, filePath: 'descargado en el navegador' };
 }
 
-function pickCsvFile(): Promise<File | null> {
-  if ('showOpenFilePicker' in window) {
-    return (window as typeof window & {
-      showOpenFilePicker: (options: {
-        multiple: boolean;
-        types: Array<{ description: string; accept: Record<string, string[]> }>;
-      }) => Promise<Array<{ getFile: () => Promise<File> }>>;
-    })
-      .showOpenFilePicker({
-        multiple: false,
-        types: [{ description: 'CSV', accept: { 'text/csv': ['.csv'] } }],
-      })
-      .then(async ([handle]) => handle?.getFile() ?? null)
-      .catch(() => null);
-  }
-
+function pickCsvFileWithInput(): Promise<File | null> {
   return new Promise((resolve) => {
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = '.csv,text/csv';
-    input.style.display = 'none';
+    input.style.position = 'fixed';
+    input.style.left = '-9999px';
+    input.style.opacity = '0';
+    input.style.pointerEvents = 'none';
     document.body.appendChild(input);
 
     const cleanup = () => {
@@ -641,6 +629,34 @@ function pickCsvFile(): Promise<File | null> {
     window.addEventListener('focus', onFocus, { once: true });
     input.click();
   });
+}
+
+async function pickCsvFile(): Promise<File | null> {
+  if (!('showOpenFilePicker' in window)) {
+    return pickCsvFileWithInput();
+  }
+
+  try {
+    const handles = await (window as typeof window & {
+      showOpenFilePicker: (options: {
+        multiple: boolean;
+        excludeAcceptAllOption?: boolean;
+        types: Array<{ description: string; accept: Record<string, string[]> }>;
+      }) => Promise<Array<{ getFile: () => Promise<File> }>>;
+    }).showOpenFilePicker({
+      multiple: false,
+      excludeAcceptAllOption: true,
+      types: [{ description: 'CSV', accept: { 'text/csv': ['.csv'] } }],
+    });
+
+    return (await handles[0]?.getFile()) ?? null;
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      return null;
+    }
+
+    return pickCsvFileWithInput();
+  }
 }
 
 async function importCsv(): Promise<{ canceled: boolean; imported?: BackupImportSummary }> {
