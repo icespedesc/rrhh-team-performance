@@ -1939,17 +1939,28 @@ export default function App() {
   }
 
   async function handleImport() {
-    const result = await window.performanceApp.importCsv();
-    if (result.canceled) {
-      setStatus('La importación fue cancelada.');
-      return;
+    try {
+      const result = await window.performanceApp.importCsv();
+      if (result.canceled) {
+        setStatus('La importación fue cancelada.');
+        return;
+      }
+
+      const importMessage = `Importación completada: ${result.imported?.collaborators ?? 0} colaboradores, ${result.imported?.evaluations ?? 0} evaluaciones y ${result.imported?.statuses ?? 0} cierres restaurados${result.imported?.settingsUpdated ? ', incluyendo la firma del responsable.' : '.'}`;
+
+      await refreshAll(true);
+      setStatus(importMessage);
+      setImportDialogMessage(`${importMessage} La vista ya fue actualizada con los datos cargados.`);
+    } catch (error) {
+      const importErrorMessage = error instanceof Error
+        ? `La importación falló: ${error.message}`
+        : 'La importación falló por un error inesperado.';
+
+      setStatus(importErrorMessage);
+      setImportDialogMessage(
+        `${importErrorMessage} Comparte este mensaje junto con el archivo CSV usado para poder revisar y corregir el problema.`,
+      );
     }
-
-    const importMessage = `Importación completada: ${result.imported?.collaborators ?? 0} colaboradores, ${result.imported?.evaluations ?? 0} evaluaciones y ${result.imported?.statuses ?? 0} cierres restaurados${result.imported?.settingsUpdated ? ', incluyendo la firma del responsable.' : '.'}`;
-
-    await refreshAll(true);
-    setStatus(importMessage);
-    setImportDialogMessage(`${importMessage} La vista ya fue actualizada con los datos cargados.`);
   }
 
   async function handleSaveAppSettings(event: FormEvent<HTMLFormElement>) {
@@ -2757,7 +2768,7 @@ export default function App() {
           <div className="confirm-dialog" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true">
             <div className="confirm-dialog-copy">
               <p className="panel-label">Importación</p>
-              <h3>Carga completada correctamente</h3>
+              <h3>{importDialogMessage.startsWith('La importación falló') ? 'No se pudo completar la importación' : 'Carga completada correctamente'}</h3>
               <p>{importDialogMessage}</p>
             </div>
             <div className="confirm-dialog-actions">
