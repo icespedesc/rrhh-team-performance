@@ -1027,11 +1027,21 @@ async function downloadFeedbackPdf(input: FeedbackPdfInput) {
   cursorY += 142;
 
   ensureSpace(92);
+  const detailSummaryHeight = 96;
+  const detailSummaryScoreWidth = 148;
+  const detailSummaryScoreHeight = 76;
+  const detailSummaryTextWidth = contentWidth - detailSummaryScoreWidth - 52;
   doc.setFillColor(241, 245, 255);
   doc.setDrawColor(203, 216, 244);
-  doc.roundedRect(margin, cursorY, contentWidth, 96, 18, 18, 'FD');
+  doc.roundedRect(margin, cursorY, contentWidth, detailSummaryHeight, 18, 18, 'FD');
   doc.setFillColor(38, 73, 182);
-  doc.roundedRect(margin, cursorY, 8, 96, 8, 8, 'F');
+  doc.roundedRect(margin, cursorY, 8, detailSummaryHeight, 8, 8, 'F');
+  const detailScoreCardX = pageWidth - margin - detailSummaryScoreWidth - 18;
+  const detailScoreCardY = cursorY + 10;
+  const detailScoreCardCenterX = detailScoreCardX + detailSummaryScoreWidth / 2;
+  doc.setFillColor(255, 255, 255);
+  doc.setDrawColor(214, 224, 243);
+  doc.roundedRect(detailScoreCardX, detailScoreCardY, detailSummaryScoreWidth, detailSummaryScoreHeight, 16, 16, 'FD');
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(11);
   doc.setTextColor(38, 73, 182);
@@ -1039,16 +1049,17 @@ async function downloadFeedbackPdf(input: FeedbackPdfInput) {
   doc.setFontSize(10);
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(75, 85, 104);
-  doc.text(detailSummaryBody, margin + 24, cursorY + 50, { maxWidth: contentWidth - 168 });
+  doc.text(detailSummaryBody, margin + 24, cursorY + 50, { maxWidth: detailSummaryTextWidth });
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(30);
   doc.setTextColor(21, 34, 56);
   const scoreText = formatScore(input.preview.score);
-  doc.text(scoreText, pageWidth - margin - doc.getTextWidth(scoreText), cursorY + 42);
+  doc.text(scoreText, detailScoreCardCenterX, detailScoreCardY + 34, { align: 'center' });
   doc.setFontSize(10);
   doc.setTextColor(75, 85, 104);
   const scoreSupportText = 'Síntesis del desempeño conversado';
-  doc.text(scoreSupportText, pageWidth - margin - doc.getTextWidth(scoreSupportText), cursorY + 64);
+  const scoreSupportLines = doc.splitTextToSize(scoreSupportText, detailSummaryScoreWidth - 28);
+  doc.text(scoreSupportLines, detailScoreCardCenterX, detailScoreCardY + 54, { align: 'center' });
   cursorY += 118;
 
   addSection(

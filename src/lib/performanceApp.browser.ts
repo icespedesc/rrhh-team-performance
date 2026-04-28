@@ -504,6 +504,28 @@ async function exportCsv(): Promise<{ canceled: boolean; filePath?: string }> {
     team: collaborator.team,
   }));
 
+  const statusRows = statuses.reduce<BackupRow[]>((rows, status) => {
+      const collaborator = collaboratorById.get(status.collaboratorId);
+      if (!collaborator) {
+        return rows;
+      }
+
+      rows.push({
+        backup_version: BACKUP_VERSION,
+        row_type: 'status',
+        collaborator_external_id: collaborator.externalId,
+        collaborator_name: collaborator.name,
+        collaborator_created_at: collaborator.createdAt,
+        role: collaborator.role,
+        team: collaborator.team,
+        period: status.period,
+        period_closed: 'true',
+        period_closed_at: status.closedAt,
+      });
+
+      return rows;
+    }, []);
+
   const evaluationRows: BackupRow[] = [];
   for (const evaluation of evaluations) {
     const collaborator = collaboratorById.get(evaluation.collaboratorId);
@@ -563,6 +585,7 @@ async function exportCsv(): Promise<{ canceled: boolean; filePath?: string }> {
       leader_email: appSettings.leaderEmail,
     },
     ...collaboratorRows,
+    ...statusRows,
     ...evaluationRows,
   ];
 
@@ -636,6 +659,7 @@ async function importCsv(): Promise<{ canceled: boolean; imported?: BackupImport
   const db = await getDatabase();
   const settingsRows: BackupRow[] = [];
   const collaboratorRows: BackupRow[] = [];
+  const statusRows: BackupRow[] = [];
   const evaluationRows: BackupRow[] = [];
 
   for (const row of parsed.data) {
@@ -648,6 +672,11 @@ async function importCsv(): Promise<{ canceled: boolean; imported?: BackupImport
 
     if (rowType === 'collaborator') {
       collaboratorRows.push(row);
+      continue;
+    }
+
+    if (rowType === 'status') {
+      statusRows.push(row);
       continue;
     }
 
@@ -671,6 +700,7 @@ async function importCsv(): Promise<{ canceled: boolean; imported?: BackupImport
   let statusesImported = 0;
   const importedCollaboratorIds = new Set<string>();
   const collaboratorIdByExternalId = new Map<string, number>();
+  const importedStatusIds = new Set<string>();
 
   async function ensureCollaborator(row: BackupRow) {
     const externalId = row.collaborator_external_id?.trim();
@@ -717,6 +747,33 @@ async function importCsv(): Promise<{ canceled: boolean; imported?: BackupImport
     await ensureCollaborator(row);
   }
 
+  async function importStatusRow(row: BackupRow) {
+    const collaboratorId = await ensureCollaborator(row);
+    const normalizedPeriod = row.period?.trim();
+
+    if (!collaboratorId || !normalizedPeriod || !isTruthyFlag(row.period_closed)) {
+      return;
+    }
+
+    const statusId = makeStatusId(collaboratorId, normalizedPeriod);
+    if (importedStatusIds.has(statusId)) {
+      return;
+    }
+
+    await db.put('statuses', {
+      id: statusId,
+      collaboratorId,
+      period: normalizedPeriod,
+      closedAt: row.period_closed_at?.trim() || new Date().toISOString(),
+    });
+    importedStatusIds.add(statusId);
+    statusesImported += 1;
+  }
+
+  for (const row of statusRows) {
+    await importStatusRow(row);
+  }
+
   const latestSettingsRow = settingsRows.at(-1);
   if (latestSettingsRow) {
     await saveAppSettings({
@@ -760,15 +817,7 @@ async function importCsv(): Promise<{ canceled: boolean; imported?: BackupImport
     });
     evaluationsImported += 1;
 
-    if (isTruthyFlag(row.period_closed)) {
-      await db.put('statuses', {
-        id: makeStatusId(collaboratorId, normalizedPeriod),
-        collaboratorId,
-        period: normalizedPeriod,
-        closedAt: row.period_closed_at?.trim() || new Date().toISOString(),
-      });
-      statusesImported += 1;
-    }
+    await importStatusRow(row);
   }
 
   return {

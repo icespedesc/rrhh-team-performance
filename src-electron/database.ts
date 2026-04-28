@@ -659,6 +659,50 @@ export function exportCsv(): string {
   `).all() as Array<{ collaboratorId: number; period: string; closedAt: string }>;
   const statusByKey = new Map(statuses.map((item) => [`${item.collaboratorId}::${item.period}`, item]));
   const appSettings = getAppSettings();
+  const collaboratorById = new Map(collaborators.map((item) => [item.id, item]));
+
+  const collaboratorRows: FlatExportRow[] = collaborators.map((collaborator) => ({
+    backup_version: BACKUP_VERSION,
+    row_type: 'collaborator',
+    collaborator_external_id: collaborator.externalId,
+    collaborator_name: collaborator.name,
+    collaborator_created_at: collaborator.createdAt,
+    role: collaborator.role,
+    team: collaborator.team,
+  }));
+
+  const statusRows = statuses.reduce<FlatExportRow[]>((rows, status) => {
+    const collaborator = collaboratorById.get(status.collaboratorId);
+    if (!collaborator) {
+      return rows;
+    }
+
+    rows.push({
+      backup_version: BACKUP_VERSION,
+      row_type: 'status',
+      collaborator_external_id: collaborator.externalId,
+      collaborator_name: collaborator.name,
+      collaborator_created_at: collaborator.createdAt,
+      role: collaborator.role,
+      team: collaborator.team,
+      period: status.period,
+      period_closed: 'true',
+      period_closed_at: status.closedAt,
+    });
+
+    return rows;
+  }, []);
+
+  const evaluationRows: FlatExportRow[] = evaluations.map((evaluation) => {
+    const status = statusByKey.get(`${evaluation.collaborator_id}::${evaluation.period}`);
+    return {
+      ...evaluation,
+      backup_version: BACKUP_VERSION,
+      row_type: 'evaluation',
+      period_closed: status ? 'true' : 'false',
+      period_closed_at: status?.closedAt ?? '',
+    } satisfies FlatExportRow;
+  });
 
   const rows: FlatExportRow[] = [
     {
@@ -668,25 +712,9 @@ export function exportCsv(): string {
       leader_role: appSettings.leaderRole,
       leader_email: appSettings.leaderEmail,
     },
-    ...collaborators.map((collaborator) => ({
-      backup_version: BACKUP_VERSION,
-      row_type: 'collaborator',
-      collaborator_external_id: collaborator.externalId,
-      collaborator_name: collaborator.name,
-      collaborator_created_at: collaborator.createdAt,
-      role: collaborator.role,
-      team: collaborator.team,
-    })),
-    ...evaluations.map((evaluation) => {
-      const status = statusByKey.get(`${evaluation.collaborator_id}::${evaluation.period}`);
-      return {
-        ...evaluation,
-        backup_version: BACKUP_VERSION,
-        row_type: 'evaluation',
-        period_closed: status ? 'true' : 'false',
-        period_closed_at: status?.closedAt ?? '',
-      } satisfies FlatExportRow;
-    }),
+    ...collaboratorRows,
+    ...statusRows,
+    ...evaluationRows,
   ];
 
   return stringify(rows.map(serializeBackupRow), { header: true, columns: BACKUP_COLUMNS });
@@ -701,6 +729,7 @@ export function importCsv(csvContent: string): BackupImportSummary {
 
   const settingsRows: FlatExportRow[] = [];
   const collaboratorRows: FlatExportRow[] = [];
+  const statusRows: FlatExportRow[] = [];
   const evaluationRows: FlatExportRow[] = [];
 
   for (const row of rows) {
@@ -713,6 +742,11 @@ export function importCsv(csvContent: string): BackupImportSummary {
 
     if (rowType === 'collaborator') {
       collaboratorRows.push(row);
+      continue;
+    }
+
+    if (rowType === 'status') {
+      statusRows.push(row);
       continue;
     }
 
@@ -733,6 +767,7 @@ export function importCsv(csvContent: string): BackupImportSummary {
 
   const importedCollaboratorIds = new Set<string>();
   const collaboratorIdByExternalId = new Map<string, number>();
+  const importedStatusIds = new Set<string>();
   let evaluationsImported = 0;
   let statusesImported = 0;
   let settingsUpdated = false;
@@ -785,6 +820,32 @@ export function importCsv(csvContent: string): BackupImportSummary {
     ensureCollaborator(row);
   }
 
+  function importStatusRow(row: FlatExportRow) {
+    const collaboratorId = ensureCollaborator(row);
+    const normalizedPeriod = row.period?.trim();
+
+    if (!collaboratorId || !normalizedPeriod || !isTruthyFlag(row.period_closed)) {
+      return;
+    }
+
+    const statusId = `${collaboratorId}::${normalizedPeriod}`;
+    if (importedStatusIds.has(statusId)) {
+      return;
+    }
+
+    db.prepare(`
+      INSERT INTO evaluation_statuses (collaborator_id, period, closed_at)
+      VALUES (?, ?, ?)
+      ON CONFLICT(collaborator_id, period) DO UPDATE SET closed_at = excluded.closed_at
+    `).run(collaboratorId, normalizedPeriod, row.period_closed_at?.trim() || new Date().toISOString());
+    importedStatusIds.add(statusId);
+    statusesImported += 1;
+  }
+
+  for (const row of statusRows) {
+    importStatusRow(row);
+  }
+
   const latestSettingsRow = settingsRows.at(-1);
   if (latestSettingsRow) {
     saveAppSettings({
@@ -829,14 +890,7 @@ export function importCsv(csvContent: string): BackupImportSummary {
     saveEvaluation(evaluationInput);
     evaluationsImported += 1;
 
-    if (isTruthyFlag(row.period_closed)) {
-      db.prepare(`
-        INSERT INTO evaluation_statuses (collaborator_id, period, closed_at)
-        VALUES (?, ?, ?)
-        ON CONFLICT(collaborator_id, period) DO UPDATE SET closed_at = excluded.closed_at
-      `).run(collaboratorId, normalizedPeriod, row.period_closed_at?.trim() || new Date().toISOString());
-      statusesImported += 1;
-    }
+    importStatusRow(row);
   }
 
   return {
