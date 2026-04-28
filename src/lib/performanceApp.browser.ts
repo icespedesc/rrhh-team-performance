@@ -725,7 +725,7 @@ async function importCsv(): Promise<{ canceled: boolean; imported?: BackupImport
     }
 
     const cachedId = collaboratorIdByExternalId.get(externalId);
-    if (cachedId) {
+    if (cachedId !== undefined) {
       importedCollaboratorIds.add(externalId);
       return cachedId;
     }
@@ -745,8 +745,7 @@ async function importCsv(): Promise<{ canceled: boolean; imported?: BackupImport
       return updated.id;
     }
 
-    const payload: Collaborator = {
-      id: 0,
+    const payload: Omit<Collaborator, 'id'> = {
       externalId,
       createdAt: row.collaborator_created_at?.trim() || new Date().toISOString(),
       name: row.collaborator_name?.trim() || 'Colaborador',
@@ -767,7 +766,7 @@ async function importCsv(): Promise<{ canceled: boolean; imported?: BackupImport
     const collaboratorId = await ensureCollaborator(row);
     const normalizedPeriod = row.period?.trim();
 
-    if (!collaboratorId || !normalizedPeriod || !isTruthyFlag(row.period_closed)) {
+    if (collaboratorId === null || !normalizedPeriod || !isTruthyFlag(row.period_closed)) {
       return;
     }
 
@@ -800,7 +799,7 @@ async function importCsv(): Promise<{ canceled: boolean; imported?: BackupImport
     const collaboratorId = await ensureCollaborator(row);
     const normalizedPeriod = row.period?.trim();
 
-    if (!collaboratorId || !normalizedPeriod) {
+    if (collaboratorId === null || !normalizedPeriod) {
       continue;
     }
 
