@@ -133,6 +133,7 @@ const emptyAppSettings: AppSettings = {
   leaderEmail: '',
 };
 type IconComponent = typeof IconUser;
+type ScoreTone = 'excellent' | 'positive' | 'neutral' | 'risk';
 
 const criterionIcons: Record<CriterionKey, IconComponent> = {
   collaboration: IconUsersGroup,
@@ -153,12 +154,34 @@ function formatScore(score: number) {
   return Number.isFinite(score) ? score.toFixed(1) : '0.0';
 }
 
+function getScoreTone(score: number): ScoreTone {
+  if (score >= 85) {
+    return 'excellent';
+  }
+
+  if (score >= 70) {
+    return 'positive';
+  }
+
+  if (score >= 50) {
+    return 'neutral';
+  }
+
+  return 'risk';
+}
+
 function getScoreIcon(score: number) {
-  if (score >= 80) {
+  const tone = getScoreTone(score);
+
+  if (tone === 'excellent') {
+    return IconTrophy;
+  }
+
+  if (tone === 'positive') {
     return IconMoodSmile;
   }
 
-  if (score >= 60) {
+  if (tone === 'neutral') {
     return IconMoodEmpty;
   }
 
@@ -193,6 +216,25 @@ function getCompensationCopy(compensationBand: string) {
 function getScoreTheme(score: number): CSSProperties {
   const clamped = Math.max(0, Math.min(100, score));
   const hue = clamped * 1.2;
+  const tone = getScoreTone(score);
+  const iconTheme = {
+    excellent: {
+      badge: 'hsl(48 95% 88%)',
+      text: 'hsl(38 78% 28%)',
+    },
+    positive: {
+      badge: 'hsl(122 62% 90%)',
+      text: 'hsl(126 52% 28%)',
+    },
+    neutral: {
+      badge: 'hsl(70 58% 89%)',
+      text: 'hsl(72 42% 32%)',
+    },
+    risk: {
+      badge: 'hsl(10 90% 90%)',
+      text: 'hsl(2 62% 36%)',
+    },
+  }[tone];
 
   return {
     '--score-bg': `hsl(${hue} 88% 95%)`,
@@ -200,6 +242,8 @@ function getScoreTheme(score: number): CSSProperties {
     '--score-text': `hsl(${hue} 58% 24%)`,
     '--score-muted': `hsl(${hue} 38% 36%)`,
     '--score-badge': `hsl(${hue} 78% 90%)`,
+    '--score-icon-bg': iconTheme.badge,
+    '--score-icon-text': iconTheme.text,
   } as CSSProperties;
 }
 

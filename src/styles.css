@@ -545,8 +545,8 @@ textarea {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: color-mix(in srgb, var(--score-badge, #eaf0ff) 84%, white 16%);
-  color: var(--score-text, var(--accent));
+  background: color-mix(in srgb, var(--score-icon-bg, var(--score-badge, #eaf0ff)) 88%, white 12%);
+  color: var(--score-icon-text, var(--score-text, var(--accent)));
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.85);
 }
 
