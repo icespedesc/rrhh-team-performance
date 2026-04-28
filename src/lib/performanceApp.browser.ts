@@ -412,23 +412,28 @@ async function saveEvaluation(input: EvaluationRecord): Promise<EvaluationWithIn
   const insights = calculateInsights(input);
   const updatedAt = new Date().toISOString();
 
-  const payload: EvaluationWithInsights = {
-    id: current?.id ?? 0,
-    externalId: current?.externalId ?? randomId(),
-    updatedAt,
-    ...input,
-    ...insights,
-  };
-
   if (current) {
-    payload.id = current.id;
-    await db.put('evaluations', payload);
-  } else {
-    const id = await db.add('evaluations', payload);
-    payload.id = id;
-  }
+    const payload: EvaluationWithInsights = {
+      id: current.id,
+      externalId: current.externalId,
+      updatedAt,
+      ...input,
+      ...insights,
+    };
 
-  return payload;
+    await db.put('evaluations', payload);
+    return payload;
+  } else {
+    const payload: Omit<EvaluationWithInsights, 'id'> = {
+      externalId: randomId(),
+      updatedAt,
+      ...input,
+      ...insights,
+    };
+
+    const id = await db.add('evaluations', payload as EvaluationWithInsights);
+    return { ...payload, id };
+  }
 }
 
 async function getRanking(filters: EvaluationFilters): Promise<RankingRow[]> {
