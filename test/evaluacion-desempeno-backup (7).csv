@@ -1,5 +1,0 @@
-backup_version,row_type,leader_name,leader_role,leader_email,collaborator_external_id,collaborator_name,collaborator_created_at,role,team,period,collaboration,stakeholder_management,ownership,execution,software_quality,incident_response,operational_discipline,communication,autonomy,learning,innovation_ai,impact,strengths,improvements,manager_notes,feedback_session_notes,yearly_improvement_plan,growth_potential,promotion_readiness,score,compensation_band,merit_points,period_closed,period_closed_at
-2,settings,Ignacio Céspedes,Tech Manager,icespedes@falabella.cl,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
-2,collaborator,,,,f0afd4c1-1409-4ca5-a3b2-b7668d141c65,Mi Dev,2026-04-28T02:01:46.054Z,TL,LM,,,,,,,,,,,,,,,,,,,,,,,,,
-2,status,,,,f0afd4c1-1409-4ca5-a3b2-b7668d141c65,Mi Dev,2026-04-28T02:01:46.054Z,TL,LM,2026,,,,,,,,,,,,,,,,,,,,,,,true,2026-04-28T02:02:14.762Z
-2,evaluation,,,,f0afd4c1-1409-4ca5-a3b2-b7668d141c65,Mi Dev,2026-04-28T02:01:46.054Z,TL,LM,2026,3,3,3,3,3,3,3,3,3,3,3,3,hoLA,HOLA,HOLAAAA,MEJORA OE,AVANZAR,3,3,60,Sin prioridad,6,true,2026-04-28T02:02:14.762Z

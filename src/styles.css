@@ -241,9 +241,15 @@ textarea {
   opacity: 0.82;
 }
 
-.brand-mark img {
-  width: min(320px, 100%);
-  height: auto;
+.brand-title {
+  max-width: min(320px, 100%);
+  font-size: clamp(1.5rem, 3vw, 2.8rem);
+  line-height: 0.95;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #1d2d4f;
+  text-align: right;
 }
 
 .hero-actions {

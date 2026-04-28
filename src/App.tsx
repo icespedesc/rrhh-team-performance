@@ -1,7 +1,6 @@
 import { CSSProperties, FormEvent, MouseEvent, useEffect, useId, useMemo, useRef, useState } from 'react';
 import Chart from 'chart.js/auto';
 import packageJson from '../package.json';
-import falabellaLogoUrl from '../assets/falabella-logo.png';
 import {
   IconArrowUpRight,
   IconBrain,
@@ -126,6 +125,7 @@ const ratingCopy: Record<number, string> = {
 const currentYear = String(new Date().getFullYear());
 const allTeamsLabel = 'Todos los equipos';
 const appVersion = packageJson.version;
+const appBrandName = 'Evaluación de Desempeño';
 const appCredit = 'Creada por Ignacio Céspedes';
 const emptyAppSettings: AppSettings = {
   leaderName: '',
@@ -715,44 +715,8 @@ function buildPdfSharedSection(systemText: string, manualText: string, manualLea
   return lines;
 }
 
-let pdfLogoDataUrlPromise: Promise<string | null> | null = null;
-
-function blobToDataUrl(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      if (typeof reader.result === 'string') {
-        resolve(reader.result);
-        return;
-      }
-
-      reject(new Error('No se pudo convertir la imagen del logo.'));
-    };
-    reader.onerror = () => reject(reader.error ?? new Error('No se pudo leer la imagen del logo.'));
-    reader.readAsDataURL(blob);
-  });
-}
-
-async function getPdfLogoDataUrl() {
-  if (!pdfLogoDataUrlPromise) {
-    pdfLogoDataUrlPromise = fetch(falabellaLogoUrl)
-      .then((response) => {
-        if (!response.ok) {
-          throw new Error('No se pudo cargar el logo para el PDF.');
-        }
-
-        return response.blob();
-      })
-      .then(blobToDataUrl)
-      .catch(() => null);
-  }
-
-  return pdfLogoDataUrlPromise;
-}
-
 async function downloadFeedbackPdf(input: FeedbackPdfInput) {
   const { jsPDF } = await import('jspdf');
-  const logoDataUrl = await getPdfLogoDataUrl();
   const doc = new jsPDF({ format: 'a4', unit: 'pt' });
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
@@ -924,12 +888,12 @@ async function downloadFeedbackPdf(input: FeedbackPdfInput) {
   doc.line(margin + 28, coverTop + 152, margin + contentWidth - 28, coverTop + 152);
 
   drawPill(margin + 28, coverTop + 26, 150, 'Reporte de feedback 1:1');
-
-  if (logoDataUrl) {
-    doc.setFillColor(255, 255, 255);
-    doc.roundedRect(pageWidth - margin - 210, coverTop + 20, 182, 56, 18, 18, 'F');
-    doc.addImage(logoDataUrl, 'PNG', pageWidth - margin - 192, coverTop + 29, 146, 36);
-  }
+  doc.setFillColor(255, 255, 255);
+  doc.roundedRect(pageWidth - margin - 210, coverTop + 20, 182, 56, 18, 18, 'F');
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(16);
+  doc.setTextColor(21, 34, 56);
+  doc.text(appBrandName, pageWidth - margin - 194, coverTop + 52);
 
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(32);
@@ -1010,10 +974,10 @@ async function downloadFeedbackPdf(input: FeedbackPdfInput) {
 
   doc.addPage();
   cursorY = margin;
-
-  if (logoDataUrl) {
-    doc.addImage(logoDataUrl, 'PNG', margin, cursorY, 128, 38);
-  }
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(16);
+  doc.setTextColor(21, 34, 56);
+  doc.text(appBrandName, margin, cursorY + 22);
 
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(22);
@@ -2057,7 +2021,7 @@ export default function App() {
           <div className="brand-mark">
             <span className="brand-version">v{appVersion}</span>
             <span className="brand-credit">{appCredit}</span>
-            <img alt="Falabella" src={falabellaLogoUrl} />
+            <span className="brand-title">{appBrandName}</span>
           </div>
           <div className="hero-actions">
             <button className="ghost-button" onClick={() => handleFeedbackModeChange(!feedbackMode)} type="button">
