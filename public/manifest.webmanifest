@@ -1,0 +1,18 @@
+{
+  "name": "Evaluacion de Desempeño",
+  "short_name": "Feedback",
+  "description": "App offline para preparar y compartir feedback de desempeño desde el navegador.",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#f4efe6",
+  "theme_color": "#0B2E63",
+  "lang": "es-CL",
+  "icons": [
+    {
+      "src": "./app-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
