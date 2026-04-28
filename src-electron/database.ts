@@ -842,10 +842,6 @@ export function importCsv(csvContent: string): BackupImportSummary {
     statusesImported += 1;
   }
 
-  for (const row of statusRows) {
-    importStatusRow(row);
-  }
-
   const latestSettingsRow = settingsRows.at(-1);
   if (latestSettingsRow) {
     saveAppSettings({
@@ -890,6 +886,10 @@ export function importCsv(csvContent: string): BackupImportSummary {
     saveEvaluation(evaluationInput);
     evaluationsImported += 1;
 
+    importStatusRow(row);
+  }
+
+  for (const row of statusRows) {
     importStatusRow(row);
   }
 

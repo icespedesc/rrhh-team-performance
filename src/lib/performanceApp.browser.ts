@@ -770,10 +770,6 @@ async function importCsv(): Promise<{ canceled: boolean; imported?: BackupImport
     statusesImported += 1;
   }
 
-  for (const row of statusRows) {
-    await importStatusRow(row);
-  }
-
   const latestSettingsRow = settingsRows.at(-1);
   if (latestSettingsRow) {
     await saveAppSettings({
@@ -817,6 +813,10 @@ async function importCsv(): Promise<{ canceled: boolean; imported?: BackupImport
     });
     evaluationsImported += 1;
 
+    await importStatusRow(row);
+  }
+
+  for (const row of statusRows) {
     await importStatusRow(row);
   }
 

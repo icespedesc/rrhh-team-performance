@@ -1,6 +1,6 @@
 {
   "name": "evaluacion-desempeno-app",
-  "version": "1.4.6",
+  "version": "1.4.7",
   "private": true,
   "description": "Desktop app for offline performance feedback preparation and team ranking.",
   "main": "dist-electron/main.js",
