@@ -1701,23 +1701,28 @@ export default function App() {
       return;
     }
 
-    if (selectedCollaborator) {
-      const updated = await window.performanceApp.updateCollaborator(selectedCollaborator.id, collaboratorDraft);
-      setIsCreatingCollaborator(false);
-      setSelectedTeam(updated.team);
-      setStatus(`Datos actualizados para ${updated.name}.`);
-      await refreshAll();
-      setSelectedId(updated.id);
-      return;
-    }
+    try {
+      if (selectedCollaborator) {
+        const updated = await window.performanceApp.updateCollaborator(selectedCollaborator.id, collaboratorDraft);
+        setIsCreatingCollaborator(false);
+        setSelectedTeam(updated.team);
+        setStatus(`Datos actualizados para ${updated.name}.`);
+        await refreshAll();
+        setSelectedId(updated.id);
+        return;
+      }
 
-    const created = await window.performanceApp.createCollaborator(collaboratorDraft);
-    setIsCreatingCollaborator(false);
-    setCollaboratorDraft({ name: '', role: '', team: '' });
-    setSelectedTeam(created.team);
-    setStatus(`Colaborador creado: ${created.name}.`);
-    await refreshAll();
-    setSelectedId(created.id);
+      const created = await window.performanceApp.createCollaborator(collaboratorDraft);
+      setIsCreatingCollaborator(false);
+      setCollaboratorDraft({ name: '', role: '', team: '' });
+      setSelectedTeam(created.team);
+      setStatus(`Colaborador creado: ${created.name}.`);
+      showToast(`Colaborador ${created.name} agregado correctamente.`, 'save');
+      await refreshAll();
+      setSelectedId(created.id);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : 'No se pudo guardar el colaborador.');
+    }
   }
 
   function handleNewCollaborator() {
@@ -2306,31 +2311,35 @@ export default function App() {
             </button>
           </div>
 
-          <p className="helper-copy">
-            Si el colaborador ya existe de otro período, selecciónalo en la lista para abrir su evaluación de este ciclo.
-          </p>
+          {isCreatingCollaborator ? (
+            <p className="helper-copy">
+              Si el colaborador ya existe de otro período, selecciónalo en la lista para abrir su evaluación de este ciclo.
+            </p>
+          ) : null}
 
-          <form className="stack gap-m" onSubmit={handleSaveCollaborator}>
-            <input
-              placeholder="Nombre"
-              value={collaboratorDraft.name}
-              onChange={(event) => setCollaboratorDraft((current) => ({ ...current, name: event.target.value }))}
-            />
-            <input
-              placeholder="Rol"
-              value={collaboratorDraft.role}
-              onChange={(event) => setCollaboratorDraft((current) => ({ ...current, role: event.target.value }))}
-            />
-            <input
-              placeholder="Equipo"
-              value={collaboratorDraft.team}
-              onChange={(event) => setCollaboratorDraft((current) => ({ ...current, team: event.target.value }))}
-            />
-            <button className="solid-button" type="submit">
-              <IconUserPlus size={18} stroke={1.8} />
-              {selectedCollaborator ? 'Guardar cambios' : 'Agregar colaborador'}
-            </button>
-          </form>
+          {(isCreatingCollaborator || selectedCollaborator) ? (
+            <form className="stack gap-m" onSubmit={handleSaveCollaborator}>
+              <input
+                placeholder="Nombre"
+                value={collaboratorDraft.name}
+                onChange={(event) => setCollaboratorDraft((current) => ({ ...current, name: event.target.value }))}
+              />
+              <input
+                placeholder="Rol"
+                value={collaboratorDraft.role}
+                onChange={(event) => setCollaboratorDraft((current) => ({ ...current, role: event.target.value }))}
+              />
+              <input
+                placeholder="Equipo"
+                value={collaboratorDraft.team}
+                onChange={(event) => setCollaboratorDraft((current) => ({ ...current, team: event.target.value }))}
+              />
+              <button className="solid-button" type="submit">
+                <IconUserPlus size={18} stroke={1.8} />
+                {selectedCollaborator ? 'Guardar cambios' : 'Agregar colaborador'}
+              </button>
+            </form>
+          ) : null}
 
           <div className="collaborator-divider" role="presentation" />
 
